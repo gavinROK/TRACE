@@ -3,6 +3,20 @@ import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 
+// Prisma returns BigInt for the schema's BigInt columns (GithubInstallation
+// .installationId, Repository.githubId), and neither JSON.stringify nor
+// Express's res.json() know how to serialize those natively. Rendering them
+// as numeric strings is the standard fix — precision loss from a plain
+// `number` would be a real risk for GitHub's actual id range.
+declare global {
+  interface BigInt {
+    toJSON(): string;
+  }
+}
+BigInt.prototype.toJSON = function (this: bigint): string {
+  return this.toString();
+};
+
 async function bootstrap() {
   // rawBody: true preserves the exact request bytes on req.rawBody so the
   // GitHub webhook handler can verify X-Hub-Signature-256 against them —

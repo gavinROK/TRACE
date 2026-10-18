@@ -12,7 +12,18 @@ changes.
 cd ~/Developer/TRACE
 git checkout feature/backend-foundation   # this branch has the backend work
 npm install
-npm run build        # verifies everything still compiles
+npm run build                             # verifies everything still compiles
+
+# Live database (see apps/api/.env.example for the expected vars):
+docker compose up -d postgres             # trace-postgres-1 on port 5433
+cd apps/api && npx prisma migrate deploy  # apply migrations (non-interactive-safe)
+npx tsx prisma/seed.ts                     # idempotent — safe to re-run
+node dist/main.js                          # or `npm run dev` for watch mode
+
+# Frontend, in another terminal — copy apps/web/.env.example to .env.local
+# and set TRACE_API_KEY to the key the seed script printed, to see the
+# backend-status badge actually report "connected":
+cd apps/web && npm run dev
 ```
 
 Nothing on this branch has been pushed to GitHub — it exists only in the
@@ -44,20 +55,28 @@ depend on. Nothing in `apps/web` is being changed — this is additive.
       Jest, verified end-to-end — see log below)
 - [x] Prisma schema (Organization/Department/Developer/ApiKey/
       GithubInstallation/Repository/ActivityEvent/ApiUsageEvent/
-      SecurityAlert) + Docker Compose Postgres config — **schema and client
-      generation verified; migrations NOT yet run against a live database.
-      See "Known limitations."**
+      SecurityAlert) + Docker Compose Postgres config — **migrated and
+      seeded against a real local Postgres; see the live-verification log
+      entry below.**
 - [x] Organizations/developers module with org-scoped authorization
-      (`OrgApiKeyGuard` — see log below), unit-tested
+      (`OrgApiKeyGuard`) — unit-tested AND verified live against the
+      seeded database (including a real 401 on a missing key).
 - [x] GitHub integration module (Octokit-based sync + webhook signature
-      verification + a "connect installation" endpoint) — **note:** no real
-      GitHub App credentials exist in this environment, so this is
-      implemented and unit-tested against mocked GitHub API responses /
-      hand-constructed webhook payloads, not exercised against the live
-      API. See "Known limitations" before claiming this works end-to-end.
-- [x] API telemetry ingestion SDK + aggregation endpoints (see log below)
-- [x] Deterministic security alert rule engine (see log below)
+      verification + connect/sync endpoints) — the *sync logic, database
+      writes, and API surface* are now verified live end-to-end (see log
+      below), using `MockGithubApiClient` since no real GitHub App
+      credentials exist in this environment. **Still unverified:** an
+      actual call to the real GitHub REST API — `OctokitGithubApiClient`
+      itself has never run against github.com.
+- [x] API telemetry ingestion SDK + aggregation endpoints — unit-tested
+      AND verified live (real spike data in, correct summary/trend out).
+- [x] Deterministic security alert rule engine — unit-tested AND verified
+      live (the rules fired correctly against real seeded + reported
+      data, with correct dedup on a second run).
 - [x] Playwright tests for the existing graph UI (see log below)
+- [x] Frontend ↔ backend communication — a server-only proxy route plus a
+      status badge, verified live in both the connected and
+      backend-unreachable states (see log below).
 
 This list is updated as each item lands; see the detailed log below for
 what's actually been verified so far.
@@ -66,6 +85,109 @@ what's actually been verified so far.
 
 Entries are appended chronologically, newest first. Each entry says exactly
 what was verified and how.
+
+### Live database verification, two real bugs found and fixed, frontend↔backend wiring
+
+The Docker blocker from earlier is resolved — the daemon's host-side
+bridge was stuck even though the VM underneath it was still alive (a
+`docker ps`/raw socket `curl` both hung with zero response, while the VM's
+own console log showed it actively serving other requests); a full quit
+and relaunch of Docker Desktop fixed it. Confirmed before and after that
+the unrelated `merchant-platform-lab-postgres-1` container and all
+existing volumes (including another project's, `ark-outreach-os_*`) were
+untouched — it auto-restarted on its own `restart: unless-stopped` policy.
+
+Brought up `trace-postgres-1` (port 5433, its own volume, nothing shared
+with other projects), ran the initial migration, and seeded the database
+— all for real, against a live Postgres:
+
+```
+npx prisma migrate dev --name init   # 20261018225434_init
+npx tsx prisma/seed.ts                # Acme Corp, 3 departments, 7 developers, 1 dev API key
+```
+
+Then booted the real compiled server (`node dist/main.js`) against that
+database and drove it with `curl` through every flow:
+
+- **Organizations**: `GET /organizations/me` (+ `/departments`, `/developers`)
+  returned the real seeded rows; a request with no `Authorization` header
+  correctly got `401`.
+- **GitHub sync**: connected a fake installation via
+  `POST /github/installations`, then — newly added `POST
+  /github/installations/:id/sync` (this endpoint didn't exist before;
+  `GithubSyncService` had no caller) — ran a real sync against
+  `MockGithubApiClient`.
+- **Telemetry**: posted 7 days of baseline `openai` usage plus a deliberate
+  24h spike (80 requests, 30 errors) via `POST /telemetry/api-usage`, then
+  confirmed `GET /telemetry/summary` and `/telemetry/trend` aggregated
+  correctly (150 total requests, $0.30, trend bucketed by day exactly as
+  posted). Also confirmed `actorType: "verified"` without a `developerId`
+  correctly rejects with `400`.
+- **Security detection**: `POST /security/alerts/run` against that same
+  data correctly produced an `api_usage_spike` (HIGH) and an
+  `elevated_api_error_rate` (MEDIUM) alert, each with accurate evidence
+  numbers; running detection again produced zero new alerts (dedup
+  working); `PATCH /security/alerts/:id/status` and the `?status=` filter
+  on `GET /security/alerts` both worked correctly.
+
+**Two real bugs found this way — neither one the mocked unit tests could
+have caught, which is exactly why this pass mattered:**
+
+1. **BigInt JSON serialization crash.** `POST /github/installations`
+   500'd immediately — Prisma returns `BigInt` for the schema's
+   `installationId`/`githubId` columns, and neither `JSON.stringify` nor
+   Express's `res.json()` know how to serialize a `BigInt`. Fixed with
+   the standard `BigInt.prototype.toJSON` override in `main.ts`
+   (rendering as a numeric string — using `number` would risk precision
+   loss on GitHub's real id range).
+2. **Wrong dedup scope on `ActivityEvent`.** Syncing two repositories
+   produced 3 activity events instead of 6 — GitHub's mock (and, for pull
+   requests, *real* GitHub data too) can have the same commit sha or PR
+   `number` show up under more than one repository, but the old unique
+   constraint was `(organizationId, type, externalId)` with no
+   `repositoryId`, so the second repo's events silently overwrote the
+   first's via upsert. A PR number is only unique *within its own
+   repository*, never organization-wide, so this wasn't just a mock-data
+   quirk — it was a real design bug. Fixed by widening the constraint to
+   `(organizationId, repositoryId, type, externalId)` (migration
+   `20261018225858_fix_activity_event_dedupe_scope`, generated via
+   `prisma migrate diff` + applied via `prisma migrate deploy`, since
+   `migrate dev`'s interactive confirmation can't run in this
+   environment) and updating `GithubSyncService` to match. Re-verified:
+   syncing twice now correctly produces 6 events with no duplicates.
+   Added `github-sync.service.spec.ts` (5 tests, including a direct
+   regression test for this exact scenario) — this class had no unit
+   test before, which is exactly why the bug reached live testing instead
+   of being caught earlier.
+
+**Frontend ↔ backend communication**, added and verified live in both
+directions:
+- `apps/web/app/api/backend-status/route.ts` — a Next.js Route Handler
+  (server-only; `TRACE_API_KEY` never reaches the browser bundle) that
+  calls the backend's authenticated `/organizations/me` endpoints and
+  returns a sanitized `{connected, organizationName, developerCount}` /
+  `{connected: false, reason}`.
+- `components/BackendStatusBadge.tsx` — a small client-side badge in the
+  header showing that status. **Does not change the graph's data
+  source** — `OrgGraph` still reads `lib/data.ts` exactly as before, so
+  existing functionality is untouched regardless of backend availability.
+- Verified with a real browser (Playwright, headed through `node -e`)
+  in both states: backend running → badge read *"Backend connected —
+  Acme Corp (7 developers)"* with real data from the live database;
+  backend stopped → badge read *"Backend offline — showing local demo
+  data"* and the graph still rendered correctly from mock data. Added a
+  permanent e2e test for this that deliberately doesn't assert which
+  state it's in (most future contributors won't have the backend
+  configured) — only that the badge renders and the graph is unaffected
+  either way.
+
+**Verified overall:** full `lint`/`typecheck`/`test`/`build` across all
+three workspaces still pass (`apps/api` now at 57 Jest tests, `apps/web`'s
+Playwright suite now at 8). The backend server was left running against
+the live database at the end of this session; the frontend dev server
+was stopped. To pick back up: `docker compose up -d postgres` (if not
+already up), `cd apps/api && node dist/main.js`, `cd apps/web && npm run
+dev`.
 
 ### NestJS backend scaffold (`apps/api`)
 
@@ -293,11 +415,14 @@ blocked — see below.
 
 ## Known limitations (be honest about these)
 
-- **No live GitHub integration test.** The GitHub sync/webhook code is real
-  and unit-tested, but has never been run against GitHub's actual API or a
-  real GitHub App installation, because no App ID/private key/webhook secret
-  is configured anywhere in this environment. Treat it as "implemented,
-  needs a real App registration to validate end-to-end" — not "working."
+- **No test against the real GitHub API.** The sync pipeline (connect →
+  sync → database writes → attribution) is now verified end-to-end
+  against a live database — but only through `MockGithubApiClient`, since
+  no GitHub App ID/private key/webhook secret is configured anywhere in
+  this environment. `OctokitGithubApiClient` and the webhook signature
+  path have never run against github.com or a real installation. Treat
+  the *pipeline* as verified and the *live GitHub connection* as
+  "implemented, needs a real App registration to validate."
 - **No production authentication system.** Org-scoped authorization in the
   backend currently uses a development-only mechanism (see the relevant
   module's code/tests for exactly what) until a real auth provider is wired
@@ -319,17 +444,23 @@ blocked — see below.
 
 ## Upcoming work (not started)
 
-- Wiring `apps/web` to read from `apps/api` instead of static mock data
-  (with graceful fallback to mock data if the API is unreachable, so the
-  existing frontend never regresses).
+- Wiring the **graph itself** to read from `apps/api` instead of static
+  mock data. What exists today (see the live-verification log entry
+  above) is a connectivity status badge only — it proves the two talk to
+  each other and demonstrates the secure pattern (API key server-side
+  only), but `OrgGraph` still renders exclusively from `lib/data.ts`
+  regardless of backend state. Swapping the graph's actual data source
+  needs real loading/error states per the product vision and should keep
+  the mock-data fallback this badge already demonstrates.
 - Repository analytics dashboard, API usage dashboard, security alert
   dashboard views reachable from the graph (per the product vision, these
   should be graph-driven, not disconnected pages).
 - Activity timelines.
-- Real GitHub App registration and end-to-end validation once credentials
-  are available.
+- Real GitHub App registration and end-to-end validation against the
+  actual GitHub API once credentials are available (the sync pipeline
+  itself is now verified against a live database — see above — just not
+  against github.com).
 - Adding the Playwright e2e suite to CI (needs a browser-install step in
   the workflow — deliberately not done yet, see the log entry above).
-- Running Prisma migrations + the seed script against a live database
-  once Docker is responsive again (see the blocker noted above), then a
-  real end-to-end GitHub webhook/API smoke test against that database.
+- A scheduler for GitHub sync and security detection (both currently
+  manual-trigger-only endpoints — see their controllers' doc comments).

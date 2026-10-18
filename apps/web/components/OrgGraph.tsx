@@ -22,6 +22,7 @@ import { EntityNode, type EntityNode as EntityNodeT } from "@/components/nodes/E
 import { StatsRow } from "@/components/StatsRow";
 import { FilterBar } from "@/components/FilterBar";
 import { DetailPanel } from "@/components/DetailPanel";
+import { BackendStatusBadge } from "@/components/BackendStatusBadge";
 
 const nodeTypes = { entity: EntityNode };
 
@@ -130,6 +131,7 @@ function OrgGraphInner() {
         <span className="h-2 w-2 rounded-full bg-cyan-400" />
         <h1 className="text-sm font-semibold tracking-wide text-slate-100">TRACE</h1>
         <span className="text-xs text-slate-500">Developer &amp; Security Intelligence</span>
+        <BackendStatusBadge />
       </header>
 
       <StatsRow stats={orgStats} />

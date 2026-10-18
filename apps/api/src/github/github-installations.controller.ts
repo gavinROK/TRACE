@@ -1,13 +1,25 @@
-import { Body, ConflictException, Controller, Post, UseGuards } from "@nestjs/common";
+import {
+  Body,
+  ConflictException,
+  Controller,
+  NotFoundException,
+  Param,
+  Post,
+  UseGuards,
+} from "@nestjs/common";
 import { CurrentOrganizationId } from "../auth/current-organization-id.decorator";
 import { OrgApiKeyGuard } from "../auth/org-api-key.guard";
 import { PrismaService } from "../prisma/prisma.service";
 import { ConnectInstallationDto } from "./dto/connect-installation.dto";
+import { GithubSyncService } from "./github-sync.service";
 
 @Controller("github/installations")
 @UseGuards(OrgApiKeyGuard)
 export class GithubInstallationsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly githubSync: GithubSyncService,
+  ) {}
 
   /**
    * Records a GitHub App installation the caller's organization has
@@ -44,6 +56,27 @@ export class GithubInstallationsController {
         accountLogin: dto.accountLogin,
         accountType: dto.accountType,
       },
+    });
+  }
+
+  /**
+   * Runs a sync now. There is no scheduler yet (see
+   * docs/DEVELOPMENT_STATUS.md), so this is how a sync actually happens
+   * today — manually, or eventually from a webhook event.
+   */
+  @Post(":id/sync")
+  async sync(@CurrentOrganizationId() organizationId: string, @Param("id") id: string) {
+    const installation = await this.prisma.githubInstallation.findFirst({
+      where: { id, organizationId },
+    });
+    if (!installation) {
+      throw new NotFoundException("GitHub installation not found");
+    }
+
+    return this.githubSync.syncInstallation({
+      id: installation.id,
+      organizationId: installation.organizationId,
+      installationId: installation.installationId,
     });
   }
 }

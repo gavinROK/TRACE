@@ -95,8 +95,9 @@ export class GithubSyncService {
 
       await this.prisma.activityEvent.upsert({
         where: {
-          organizationId_type_externalId: {
+          organizationId_repositoryId_type_externalId: {
             organizationId: installation.organizationId,
+            repositoryId,
             type: ActivityEventType.COMMIT,
             externalId: commit.sha,
           },
@@ -141,8 +142,9 @@ export class GithubSyncService {
 
       await this.prisma.activityEvent.upsert({
         where: {
-          organizationId_type_externalId: {
+          organizationId_repositoryId_type_externalId: {
             organizationId: installation.organizationId,
+            repositoryId,
             type: ActivityEventType.PULL_REQUEST,
             externalId: String(pr.number),
           },

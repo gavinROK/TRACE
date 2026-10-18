@@ -136,12 +136,18 @@ model ActivityEvent {
   /// GitHub's commit sha, `pull_request` number, etc. — whatever makes
   /// this event idempotent to re-sync. Null for events with no natural
   /// external identity.
+  ///
+  /// Scoped to (organizationId, repositoryId, type, externalId), not just
+  /// (organizationId, type, externalId) — a pull_request's `number` is
+  /// only unique *within its own repository*, not across an organization,
+  /// so repositoryId must be part of the dedupe key or PR #1 in one repo
+  /// collides with PR #1 in another.
   externalId     String?
   occurredAt     DateTime
   metadata       Json?
   createdAt      DateTime      @default(now())
 
-  @@unique([organizationId, type, externalId])
+  @@unique([organizationId, repositoryId, type, externalId])
   @@index([organizationId, occurredAt])
   @@map("activity_events")
 }

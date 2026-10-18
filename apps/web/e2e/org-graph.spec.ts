@@ -96,3 +96,16 @@ test("exports the graph as a JSON Canvas file", async ({ page }) => {
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe("trace-org-graph.canvas");
 });
+
+test("shows a backend connectivity status without affecting the graph", async ({ page }) => {
+  // Deliberately doesn't assert "connected" vs "offline" — that depends
+  // on whether TRACE_API_BASE_URL/TRACE_API_KEY are configured in this
+  // environment, which most contributors won't have set up. Either way,
+  // the badge must render something, and the graph (driven by local mock
+  // data regardless of backend state) must be unaffected.
+  const badge = page.getByTestId("backend-status-badge");
+  await expect(badge).toBeVisible();
+  await expect(badge).toContainText(/Backend (connected|offline)/);
+
+  await expect(page.getByTestId("node-org")).toContainText("Acme Corp");
+});
