@@ -7,7 +7,7 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
-    "lint": "eslint \"src/**/*.ts\"",
+    "lint": "eslint \"src/**/*.ts\" \"prisma/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "jest",
     "prisma:generate": "prisma generate",

@@ -267,6 +267,28 @@ twice: once that caught the failure above, once clean after the fix).
 Full repo-wide `lint`/`typecheck`/`test`/`build` across all three
 workspaces still pass after these additions.
 
+### Fixed: missing seed script
+
+Caught during a self-review pass: `apps/api/package.json`'s
+`prisma:seed` script (`tsx prisma/seed.ts`) pointed at a file that was
+never actually created — a leftover from the very first backend-scaffold
+commit. Wrote `apps/api/prisma/seed.ts`: Acme Corp org, the same three
+departments and seven developers apps/web/lib/data.ts already uses (so a
+demo of the real backend lines up with the frontend's existing mock
+data), and one local-dev API key (printed once on first run — its hash,
+not the raw key, is what's stored; re-running seed detects the existing
+key and doesn't print a key you can no longer retrieve). Two developers'
+`githubLogin` match `MockGithubApiClient`'s sample commit authors, so a
+sync run against the mock client (the default with no real GitHub App
+configured) demonstrates real developer attribution without needing live
+GitHub credentials. Every write is an upsert, safe to re-run. Also
+widened `apps/api`'s lint script to cover `prisma/**/*.ts`, which it had
+been silently skipping.
+
+**Verified:** typecheck/lint/test/build all still pass. **NOT verified:**
+actually running this script, which needs the live database that's still
+blocked — see below.
+
 <!-- New entries go above this line -->
 
 ## Known limitations (be honest about these)
@@ -286,6 +308,14 @@ workspaces still pass after these additions.
 - **API cost estimation is illustrative**, based on simple per-request/token
   heuristics documented in the telemetry module, not live provider pricing
   APIs.
+- **No API-key management endpoint.** `ApiKey` rows (what `OrgApiKeyGuard`
+  authenticates against) can currently only be created by the seed script
+  or a direct database write — there is no API to create, list, or revoke
+  one yet. Fine for local dev/demo; a real onboarding flow needs this.
+- **CORS is wide open** (`app.enableCors()` with no allowlist) and there is
+  no rate limiting anywhere, including on the webhook and telemetry
+  ingestion endpoints. Both are explicitly fine for local development,
+  not for any real deployment.
 
 ## Upcoming work (not started)
 
