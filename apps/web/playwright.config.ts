@@ -14,7 +14,13 @@ export default defineConfig({
   webServer: {
     command: `npm run dev -- -p ${PORT}`,
     url: `http://localhost:${PORT}`,
-    reuseExistingServer: true,
+    // Always starts fresh (never reuses a server someone else left
+    // running) and explicitly clears the backend env vars, so this suite
+    // deterministically exercises demo mode regardless of whatever
+    // .env.local happens to contain on a given machine. Live-mode
+    // behavior has its own suite — see playwright.live.config.ts.
+    reuseExistingServer: false,
+    env: { TRACE_API_BASE_URL: "", TRACE_API_KEY: "" },
     timeout: 60_000,
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

@@ -1,6 +1,7 @@
-// Shared domain types for the TRACE org graph. Phase 1 uses simulated data
-// that conforms to these shapes; later phases will populate them from the
-// GitHub, API telemetry, and security integrations instead.
+// Shared domain types for the TRACE org graph. In demo mode these are
+// populated from simulated data (lib/data.ts); in live mode they're
+// mapped from a real GET /graph/snapshot response (lib/map-snapshot.ts) —
+// see lib/useGraphData.ts for which one a given session is using.
 
 export type NodeKind =
   | "organization"
@@ -8,7 +9,11 @@ export type NodeKind =
   | "developer"
   | "github"
   | "apiUsage"
-  | "security";
+  | "security"
+  | "repositoryGroup"
+  | "repository"
+  | "apiUsageDashboard"
+  | "securityAlertsGroup";
 
 export type ActivityLevel = "high" | "medium" | "low";
 
@@ -58,13 +63,48 @@ export interface SecurityMetricEntity extends BaseEntity {
   severity: ActivityLevel;
 }
 
+/** Groups repository nodes under the organization — a structural node like
+ * a department, not a metric leaf. Only appears in live mode. */
+export interface RepositoryGroupEntity extends BaseEntity {
+  kind: "repositoryGroup";
+  description: string;
+}
+
+export interface RepositoryEntity extends BaseEntity {
+  kind: "repository";
+  fullName: string;
+  isPrivate: boolean;
+  defaultBranch: string;
+  commitCount: number;
+  openPullRequestCount: number;
+}
+
+/** Org-wide API usage, reachable from the graph; opening it fetches the
+ * full provider/trend breakdown. Only appears in live mode. */
+export interface ApiUsageDashboardEntity extends BaseEntity {
+  kind: "apiUsageDashboard";
+  requestCount: number;
+  providerCount: number;
+}
+
+/** Org-wide security alerts, reachable from the graph; opening it fetches
+ * the full alert list. Only appears in live mode. */
+export interface SecurityAlertsGroupEntity extends BaseEntity {
+  kind: "securityAlertsGroup";
+  openCount: number;
+}
+
 export type OrgEntity =
   | OrganizationEntity
   | DepartmentEntity
   | DeveloperEntity
   | GithubMetricEntity
   | ApiUsageMetricEntity
-  | SecurityMetricEntity;
+  | SecurityMetricEntity
+  | RepositoryGroupEntity
+  | RepositoryEntity
+  | ApiUsageDashboardEntity
+  | SecurityAlertsGroupEntity;
 
-/** The three leaf metric kinds that hang off a developer node. */
+/** The three per-developer metric leaf kinds (toggled by the filter bar). */
 export const METRIC_KINDS: NodeKind[] = ["github", "apiUsage", "security"];

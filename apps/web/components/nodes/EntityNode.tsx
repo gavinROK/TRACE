@@ -39,7 +39,12 @@ export function EntityNode({ data }: NodeProps<EntityNode>) {
   const { entity, canExpand, isCollapsed, isSelected, onToggleCollapse, onSelect } = data;
 
   const isLeafMetric =
-    entity.kind === "github" || entity.kind === "apiUsage" || entity.kind === "security";
+    entity.kind === "github" ||
+    entity.kind === "apiUsage" ||
+    entity.kind === "security" ||
+    entity.kind === "repository" ||
+    entity.kind === "apiUsageDashboard" ||
+    entity.kind === "securityAlertsGroup";
 
   return (
     <div
@@ -106,6 +111,14 @@ function NodeIcon({ entity }: { entity: OrgEntity }) {
       return <ApiUsageIcon className={className} />;
     case "security":
       return <SecurityIcon className={className} />;
+    case "repositoryGroup":
+      return <DepartmentIcon className={className} />;
+    case "repository":
+      return <GithubIcon className={className} />;
+    case "apiUsageDashboard":
+      return <ApiUsageIcon className={className} />;
+    case "securityAlertsGroup":
+      return <SecurityIcon className={className} />;
   }
 }
 
@@ -118,8 +131,11 @@ function NodeSubtitle({ entity }: { entity: OrgEntity }) {
       </div>
     );
   }
-  if (entity.kind === "organization" || entity.kind === "department") {
+  if (entity.kind === "organization" || entity.kind === "department" || entity.kind === "repositoryGroup") {
     return <div className="truncate text-xs text-slate-400">{entity.description}</div>;
+  }
+  if (entity.kind === "repository") {
+    return <div className="truncate text-xs text-slate-400">{entity.fullName}</div>;
   }
   return null;
 }
@@ -151,6 +167,28 @@ function NodeMetrics({ entity }: { entity: OrgEntity }) {
       return (
         <div className={`mt-2 text-xs font-medium ${SEVERITY_TEXT[entity.severity]}`}>
           {entity.openAlerts} open alert{entity.openAlerts === 1 ? "" : "s"}
+        </div>
+      );
+    case "repository":
+      return (
+        <div className="mt-2 flex gap-3 text-xs text-slate-400">
+          <span>{entity.commitCount} commits</span>
+          <span>{entity.openPullRequestCount} open PRs</span>
+        </div>
+      );
+    case "apiUsageDashboard":
+      return (
+        <div className="mt-2 flex gap-3 text-xs text-slate-400">
+          <span>{entity.requestCount.toLocaleString()} requests</span>
+          <span>{entity.providerCount} providers</span>
+        </div>
+      );
+    case "securityAlertsGroup":
+      return (
+        <div
+          className={`mt-2 text-xs font-medium ${entity.openCount > 0 ? "text-rose-400" : "text-slate-400"}`}
+        >
+          {entity.openCount} open alert{entity.openCount === 1 ? "" : "s"}
         </div>
       );
     default:

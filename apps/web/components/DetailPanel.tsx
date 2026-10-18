@@ -1,12 +1,28 @@
 import type { OrgEntity } from "@/lib/types";
+import { ApiUsageDashboardPanel } from "@/components/ApiUsageDashboardPanel";
+import { SecurityAlertsPanel } from "@/components/SecurityAlertsPanel";
 
 interface DetailPanelProps {
   entity: OrgEntity;
   childEntities: OrgEntity[];
   onClose: () => void;
+  /** Called after an action in a panel changes backend data (e.g.
+   * resolving a security alert), so the graph can refetch and stay in
+   * sync with the database. Unused in demo mode. */
+  onDataChanged?: () => void;
 }
 
-export function DetailPanel({ entity, childEntities, onClose }: DetailPanelProps) {
+export function DetailPanel({ entity, childEntities, onClose, onDataChanged }: DetailPanelProps) {
+  // These two are org-wide dashboards, not simple field lists — they fetch
+  // their own richer data on open, so they get dedicated panels instead of
+  // the generic field renderer below.
+  if (entity.kind === "apiUsageDashboard") {
+    return <ApiUsageDashboardPanel onClose={onClose} />;
+  }
+  if (entity.kind === "securityAlertsGroup") {
+    return <SecurityAlertsPanel onClose={onClose} onDataChanged={onDataChanged} />;
+  }
+
   return (
     <aside
       data-testid="detail-panel"
@@ -63,6 +79,7 @@ function EntityFields({ entity }: { entity: OrgEntity }) {
   switch (entity.kind) {
     case "organization":
     case "department":
+    case "repositoryGroup":
       return <p className="text-slate-400">{entity.description}</p>;
     case "developer":
       return (
@@ -95,5 +112,19 @@ function EntityFields({ entity }: { entity: OrgEntity }) {
           <Field label="Severity" value={entity.severity} />
         </>
       );
+    case "repository":
+      return (
+        <>
+          <Field label="Full name" value={entity.fullName} />
+          <Field label="Visibility" value={entity.isPrivate ? "Private" : "Public"} />
+          <Field label="Default branch" value={entity.defaultBranch} />
+          <Field label="Commits" value={entity.commitCount} />
+          <Field label="Open pull requests" value={entity.openPullRequestCount} />
+        </>
+      );
+    case "apiUsageDashboard":
+    case "securityAlertsGroup":
+      // Handled by a dedicated panel in DetailPanel above — never reaches here.
+      return null;
   }
 }

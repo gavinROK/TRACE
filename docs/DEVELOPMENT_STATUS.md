@@ -77,6 +77,15 @@ depend on. Nothing in `apps/web` is being changed — this is additive.
 - [x] Frontend ↔ backend communication — a server-only proxy route plus a
       status badge, verified live in both the connected and
       backend-unreachable states (see log below).
+- [x] **The graph itself now renders from live backend data** when
+      configured, with demo mode preserved as an explicit, clearly-labeled
+      fallback (see "Graph connected to live backend data" log entry) —
+      this was the primary objective of the most recent work.
+- [x] Repository and developer detail panels backed by real data; API
+      usage dashboard and security alert explorer panels, each reachable
+      only by clicking a node in the graph (not a separate page).
+- [ ] GitHub organization onboarding UI (connect + trigger sync from the
+      graph itself, not just curl) — not yet built, see "Upcoming work."
 
 This list is updated as each item lands; see the detailed log below for
 what's actually been verified so far.
@@ -85,6 +94,90 @@ what's actually been verified so far.
 
 Entries are appended chronologically, newest first. Each entry says exactly
 what was verified and how.
+
+### Graph connected to live backend data, with demo mode preserved
+
+The primary objective of this round: the interactive graph itself — not
+just a status badge — now renders from real database records when a
+backend is configured, falling back to the existing static demo data
+(unchanged) otherwise. Every graph relationship in live mode traces back
+to an actual row: Organization/Department/Developer/Repository tables and
+counts derived from ActivityEvent/ApiUsageEvent/SecurityAlert — nothing
+arbitrary.
+
+**Backend:** added `GET /graph/snapshot` (`apps/api/src/graph`) —
+deliberately lean: it returns the graph's *structure* (org, departments,
+developers, repositories) plus small per-node summary counts, computed
+from real rows. It does not duplicate the richer `/telemetry/*` or
+`/security/alerts` logic — the frontend fetches those separately, lazily,
+only when a user opens that specific panel.
+
+**Frontend:**
+- `lib/useGraphData.ts` — starts with demo data synchronously (interactive
+  immediately, no loading flash), fetches the live snapshot, and swaps to
+  it on success or stays on demo data on any failure. Exposes `mode`
+  ("checking" | "live" | "demo") and a `refetch` used after actions that
+  change backend data.
+- `lib/map-snapshot.ts` — converts a live snapshot into the exact same
+  `OrgEntity[]` shape demo data already used, so every existing
+  graph/filter/stats/layout component works completely unchanged in
+  either mode — no special-casing needed in `OrgGraph.tsx` beyond where
+  the entity array comes from.
+- Four new entity kinds (`lib/types.ts`): `repositoryGroup`/`repository`
+  (a new top-level branch under the org, parallel to departments) and two
+  org-wide nodes, `apiUsageDashboard` and `securityAlertsGroup`, each
+  opening a dedicated panel (`ApiUsageDashboardPanel.tsx`,
+  `SecurityAlertsPanel.tsx`) that fetches its own richer data on open —
+  a provider/cost/error table plus a 14-day trend chart for usage; a
+  filterable, status-editable alert list for security.
+- `BackendStatusBadge` reworked into a pure presentational component (no
+  longer does its own fetch — the old standalone `/api/backend-status`
+  route was deleted, since the graph's one snapshot fetch already has
+  everything the badge needs) with three states: checking / live /
+  **demo mode** (explicitly labeled, amber, as required).
+- `app/api/trace/[...path]/route.ts` — one catch-all server-side proxy
+  (GET/POST/PATCH) replacing what would otherwise have been several
+  near-identical route files; `TRACE_API_KEY` is read only inside
+  `lib/trace-api.ts`, never in client-side code.
+
+**A real bug found and fixed before it reached any test:** the first
+version reset `selectedId`/`collapsedIds` on every change to the fetched
+entity array — correct for the demo→live transition, but it meant
+updating a security alert's status (which triggers a `refetch`) would
+yank the very panel the user was looking at out from under them,
+immediately after they used it. Fixed by keying the reset on `mode`
+*transitions* specifically (checking→live, checking→demo) rather than on
+every entities change — a refetch within the same mode now preserves
+whatever the user has open/selected/dragged.
+
+**Testing — two separate Playwright suites, not one:**
+- `playwright.config.ts` (existing `e2e/`) now explicitly clears
+  `TRACE_API_BASE_URL`/`TRACE_API_KEY` for its spawned dev server and
+  always starts fresh rather than reusing one — this makes the suite
+  deterministically exercise demo mode regardless of what `.env.local`
+  happens to contain on a given machine. (Discovered why this mattered:
+  running the suite with `.env.local` configured silently broke it, since
+  it started testing *live* data against ids/labels hardcoded for demo
+  data — not a bug in the app, but exactly the kind of environment
+  dependency a test suite shouldn't have.)
+- `playwright.live.config.ts` (new `e2e-live/`) runs against a real
+  backend — explicitly documented as requiring one, run via
+  `npm run test:e2e:live --workspace apps/web`. 5 tests: real org data
+  renders, the repository group shows real synced repos, the API usage
+  dashboard shows real provider data, the security alerts panel shows
+  real alerts and updates status, and — the most meaningful one —
+  resolving an alert decrements the graph's own open-alert count by
+  exactly one, verified with `expect.poll`, then restored for
+  idempotency. Two authoring bugs were caught and fixed while writing
+  this suite (not app bugs): one test clicked a toggle on a node that
+  starts expanded by default (collapsing it instead of revealing
+  children), and another asserted a stale element's value after an
+  action correctly removed it from the current filter view.
+
+**Verified:** full `lint`/`typecheck`/`test`/`build` clean across all
+three workspaces. `apps/web`'s demo-mode suite: 8/8. The new live-mode
+suite: 5/5 (confirmed exercising the real resolve path, not skipping it,
+by setting an alert back to OPEN first and checking after).
 
 ### Live database verification, two real bugs found and fixed, frontend↔backend wiring
 
@@ -444,17 +537,12 @@ blocked — see below.
 
 ## Upcoming work (not started)
 
-- Wiring the **graph itself** to read from `apps/api` instead of static
-  mock data. What exists today (see the live-verification log entry
-  above) is a connectivity status badge only — it proves the two talk to
-  each other and demonstrates the secure pattern (API key server-side
-  only), but `OrgGraph` still renders exclusively from `lib/data.ts`
-  regardless of backend state. Swapping the graph's actual data source
-  needs real loading/error states per the product vision and should keep
-  the mock-data fallback this badge already demonstrates.
-- Repository analytics dashboard, API usage dashboard, security alert
-  dashboard views reachable from the graph (per the product vision, these
-  should be graph-driven, not disconnected pages).
+- **GitHub organization onboarding from the UI itself** — today, connecting
+  an installation and triggering a sync is curl-only
+  (`POST /github/installations`, `POST /github/installations/:id/sync`).
+  The graph now has everything needed to show the result the moment this
+  lands (the repository group, developer attribution) — next piece of
+  work.
 - Activity timelines.
 - Real GitHub App registration and end-to-end validation against the
   actual GitHub API once credentials are available (the sync pipeline
