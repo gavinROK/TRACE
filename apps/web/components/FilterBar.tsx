@@ -22,6 +22,8 @@ interface FilterBarProps {
   onExpandAll: () => void;
   onCollapseAll: () => void;
   onExportJsonCanvas: () => void;
+  /** Omitted entirely in demo mode — there's no backend to connect to. */
+  onConnectGithub?: () => void;
 }
 
 export function FilterBar({
@@ -32,6 +34,7 @@ export function FilterBar({
   onExpandAll,
   onCollapseAll,
   onExportJsonCanvas,
+  onConnectGithub,
 }: FilterBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-4 border-b border-slate-800 bg-slate-950 px-4 py-2.5">
@@ -73,6 +76,15 @@ export function FilterBar({
       </FilterGroup>
 
       <div className="ml-auto flex items-center gap-2">
+        {onConnectGithub && (
+          <button
+            type="button"
+            onClick={onConnectGithub}
+            className="rounded-md bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-900 hover:bg-white"
+          >
+            Connect GitHub
+          </button>
+        )}
         <button
           type="button"
           onClick={onExpandAll}

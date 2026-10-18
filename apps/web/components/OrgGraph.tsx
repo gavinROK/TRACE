@@ -23,6 +23,7 @@ import { StatsRow } from "@/components/StatsRow";
 import { FilterBar } from "@/components/FilterBar";
 import { DetailPanel } from "@/components/DetailPanel";
 import { BackendStatusBadge } from "@/components/BackendStatusBadge";
+import { ConnectGithubModal } from "@/components/ConnectGithubModal";
 
 const nodeTypes = { entity: EntityNode };
 
@@ -49,6 +50,8 @@ function OrgGraphInner() {
   // Positions the user has dragged a node to, keyed by node id. These take
   // priority over the computed tree layout until the next full re-layout.
   const [positionOverrides, setPositionOverrides] = useState<Map<string, Position>>(new Map());
+
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
 
   // Reset per-node UI state only when `mode` itself transitions (demo ->
   // live, on the initial load succeeding or failing) — not on every
@@ -163,7 +166,15 @@ function OrgGraphInner() {
         onExpandAll={() => setCollapsedIds(new Set())}
         onCollapseAll={() => setCollapsedIds(initiallyCollapsed)}
         onExportJsonCanvas={() => downloadJsonCanvas(entities, currentPositions)}
+        onConnectGithub={mode === "live" ? () => setIsConnectModalOpen(true) : undefined}
       />
+
+      {isConnectModalOpen && (
+        <ConnectGithubModal
+          onClose={() => setIsConnectModalOpen(false)}
+          onSynced={refetch}
+        />
+      )}
 
       <div className="relative flex-1">
         <ReactFlow

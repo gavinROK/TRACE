@@ -84,8 +84,9 @@ depend on. Nothing in `apps/web` is being changed — this is additive.
 - [x] Repository and developer detail panels backed by real data; API
       usage dashboard and security alert explorer panels, each reachable
       only by clicking a node in the graph (not a separate page).
-- [ ] GitHub organization onboarding UI (connect + trigger sync from the
-      graph itself, not just curl) — not yet built, see "Upcoming work."
+- [x] GitHub organization onboarding UI — a "Connect GitHub" button
+      (live mode only) opens a modal, connects an installation, triggers
+      a sync, and refetches the graph, all from the graph itself.
 
 This list is updated as each item lands; see the detailed log below for
 what's actually been verified so far.
@@ -94,6 +95,39 @@ what's actually been verified so far.
 
 Entries are appended chronologically, newest first. Each entry says exactly
 what was verified and how.
+
+### GitHub organization onboarding UI, and a Playwright flakiness fix
+
+Added `ConnectGithubModal.tsx` — a "Connect GitHub" button in the filter
+bar (rendered only in live mode; there's nothing to connect to in demo
+mode) opens a form, `POST`s to the existing connect endpoint, then the
+existing sync endpoint, then calls the graph's `refetch`. The modal's
+copy is explicit that this stands in for GitHub's real App-install
+redirect (which TRACE doesn't implement — no registered App exists to
+redirect from): "In production, these fields are filled in automatically
+... This demo doesn't have a registered App, so enter them manually."
+
+**Verified live**, twice: once by hand (a real browser, a real
+installation row confirmed via `curl` afterward with a matching id), and
+once via a new permanent test
+(`e2e-live/graph-live.spec.ts`: "connects a GitHub installation and syncs
+it from the onboarding modal") using a timestamp-based installation id so
+repeated runs never collide.
+
+**A real, reproducible flakiness issue found and fixed in the existing
+demo-mode suite** (not a new bug — this predates today's changes, just
+surfaced now): running the full suite with Playwright's default
+CPU-core-based worker count (5, in this sandboxed environment) made one
+test fail reliably, while the exact same test passed reliably in
+isolation or with `--workers=1`. Confirmed by testing both ends: the
+test logic itself is correct, it just wasn't getting enough wall-clock
+time to settle under that much simultaneous Chromium load. Fixed by
+capping `workers: 2` in `playwright.config.ts` — confirmed clean across
+3 separate, properly-spaced runs afterward.
+
+**Verified:** full `lint`/`typecheck`/`test`/`build` clean across all
+three workspaces. Demo suite 8/8 (×3 runs). Live suite 6/6, including
+the new onboarding test.
 
 ### Graph connected to live backend data, with demo mode preserved
 
@@ -537,12 +571,6 @@ blocked — see below.
 
 ## Upcoming work (not started)
 
-- **GitHub organization onboarding from the UI itself** — today, connecting
-  an installation and triggering a sync is curl-only
-  (`POST /github/installations`, `POST /github/installations/:id/sync`).
-  The graph now has everything needed to show the result the moment this
-  lands (the repository group, developer attribution) — next piece of
-  work.
 - Activity timelines.
 - Real GitHub App registration and end-to-end validation against the
   actual GitHub API once credentials are available (the sync pipeline

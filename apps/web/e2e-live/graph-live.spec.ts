@@ -20,6 +20,32 @@ test("renders real organization data from the live backend", async ({ page }) =>
   await expect(orgNode.first()).toBeVisible();
 });
 
+test("connects a GitHub installation and syncs it from the onboarding modal", async ({ page }) => {
+  await page.getByRole("button", { name: "Connect GitHub" }).click();
+
+  const modal = page.getByTestId("connect-github-modal");
+  await expect(modal).toBeVisible();
+
+  // A fresh id per run avoids any collision with manual testing or other
+  // runs against the same database.
+  await modal.getByLabel("Installation ID").fill(String(Date.now()).slice(-9));
+  await modal.getByLabel("Account login").fill("e2e-live-test-org");
+  await modal.getByRole("button", { name: "Connect & sync" }).click();
+
+  // Real network round trip (connect, then sync, then a graph refetch) —
+  // give it real time rather than asserting instantaneously.
+  await expect(modal).not.toBeAttached({ timeout: 15_000 });
+
+  // The mock GitHub client returns the same fixed repositories regardless
+  // of which installation synced them, so this doesn't assert a specific
+  // new count — only that the sync completed and the repository group
+  // still renders correctly afterward (the refetch didn't break anything).
+  const repoGroup = page.getByTestId("node-repository-group");
+  await expect(repoGroup).toBeVisible();
+  const repoNode = page.locator('[data-testid^="node-"]').filter({ hasText: "mock-" });
+  await expect(repoNode.first()).toBeVisible();
+});
+
 test("shows the repositories group populated from a real GitHub sync", async ({ page }) => {
   const repoGroup = page.getByTestId("node-repository-group");
   await expect(repoGroup).toBeVisible();
