@@ -40,7 +40,8 @@ local working copy pending the repository owner's approval to push.
 Building the backend foundation that Phases 2–6 of the original roadmap all
 depend on. Nothing in `apps/web` is being changed — this is additive.
 
-- [ ] `apps/api` — NestJS backend scaffold
+- [x] `apps/api` — NestJS backend scaffold (health check, strict TS, lint,
+      Jest, verified end-to-end — see log below)
 - [ ] Prisma schema + PostgreSQL via Docker Compose (local dev only)
 - [ ] Organizations/developers module with org-scoped authorization
 - [ ] GitHub integration module (Octokit-based sync + webhook signature
@@ -59,6 +60,43 @@ what's actually been verified so far.
 
 Entries are appended chronologically, newest first. Each entry says exactly
 what was verified and how.
+
+### NestJS backend scaffold (`apps/api`)
+
+Added a minimal NestJS app to the workspace: `main.ts` bootstrap with a
+global `ValidationPipe`, `AppModule` wiring `ConfigModule`, and a
+`HealthModule` (`GET /health`) with a unit test.
+
+**Dependency note:** NestJS v12 ships `@nestjs/testing` (and presumably the
+rest of the v12 family) as ESM-only (`"type": "module"`), which breaks under
+our CommonJS ts-jest setup (`Must use import to load ES Module`). Converting
+the whole backend to ESM (NodeNext module resolution, `.js`-suffixed
+relative imports, ESM-mode Jest) was the "correct" long-term fix but adds
+real ceremony for a day-one scaffold. Pinned to **NestJS v11.2.7** instead
+(current, non-deprecated, confirmed CommonJS) to keep the toolchain simple;
+revisit the ESM migration later as a deliberate, isolated piece of work if
+the project wants to track NestJS's latest major.
+
+Root scripts (`lint`/`typecheck`/`test`/`build`) fan out to every workspace
+via `--workspaces --if-present`, so `apps/api` needed no CI workflow changes
+beyond adding a `test` step (there was none before, since `apps/web` has no
+test suite yet).
+
+**Verified (clean-room, from `npm ci` at the repo root):**
+- `npm run lint` — clean (both `apps/api` and `apps/web`).
+- `npm run typecheck` — clean (both workspaces).
+- `npm run test` — `apps/api`'s one Jest suite passes; `apps/web` has no
+  tests yet so this is a no-op there.
+- `npm run build` — both workspaces build successfully.
+- Ran the compiled `dist/main.js` directly and `curl`'d `GET /health` ->
+  `200 {"status":"ok","timestamp":"..."}`. This is a real process start and
+  a real HTTP round-trip, not just a passing compile.
+- Confirmed `apps/web` is untouched and still builds/serves correctly.
+
+**Environment note:** local disk space was critically low (459MB free)
+before this work, which made `npm install` fail with `ENOSPC`. Freed ~3.5GB
+by clearing the npm cache and Docker's build cache (both pure, regenerable
+caches — no project or user data touched) before continuing.
 
 <!-- New entries go above this line -->
 
