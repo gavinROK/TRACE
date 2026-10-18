@@ -4,7 +4,8 @@
   "private": true,
   "license": "MIT",
   "workspaces": [
-    "apps/*"
+    "apps/*",
+    "packages/*"
   ],
   "scripts": {
     "dev": "npm run dev --workspace apps/web",

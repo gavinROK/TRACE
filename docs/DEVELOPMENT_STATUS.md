@@ -55,7 +55,7 @@ depend on. Nothing in `apps/web` is being changed — this is additive.
       implemented and unit-tested against mocked GitHub API responses /
       hand-constructed webhook payloads, not exercised against the live
       API. See "Known limitations" before claiming this works end-to-end.
-- [ ] API telemetry ingestion SDK + aggregation endpoints
+- [x] API telemetry ingestion SDK + aggregation endpoints (see log below)
 - [ ] Deterministic security alert rule engine
 - [ ] Playwright tests for the existing graph UI
 
@@ -165,6 +165,37 @@ then run `docker compose up -d postgres`, `npm run prisma:migrate
 --workspace apps/api`, and `npm run prisma:seed --workspace apps/api`
 from the repo root, and the rest of this plan can proceed to a real
 end-to-end verification.**
+
+### API telemetry SDK and ingestion/aggregation endpoints
+
+Added `packages/telemetry-sdk` (new `packages/*` workspace glob at the
+root) — a zero-runtime-dependency `TraceTelemetryClient` that POSTs API
+usage metadata to `apps/api`'s new `TelemetryModule`. Its `ApiUsageReport`
+type has no field for API keys, prompt text, or response bodies at all,
+so misuse in that direction is a compile error, not just a documented
+rule. `actorType` ("verified" | "inferred" | "unknown") is required on
+every report — there's no default that could silently overstate how
+confident an attribution is.
+
+Backend side: `POST /telemetry/api-usage` (validates the report, rejects
+`actorType: "verified"` without a `developerId`, rejects a `developerId`
+that doesn't resolve inside the caller's own organization), `GET
+/telemetry/summary` (per-provider totals), `GET /telemetry/trend` (daily
+request/cost totals over a lookback window, bucketed in application code
+rather than a raw SQL date-trunc query — simpler to keep correct without a
+live database to test a raw query against; revisit if usage volume ever
+makes the in-memory bucketing too costly).
+
+**Verified:** `npm run lint`/`typecheck`/`test`/`build` all pass across
+all three workspaces (`apps/web`, `apps/api`, `packages/telemetry-sdk`)
+from a clean `npm ci` at the root — 34 Jest tests total (5 new for the SDK
+itself: request shape, trailing-slash handling, ISO date serialization,
+error-on-non-2xx, success-on-2xx; 5 new for `TelemetryService`: default
+values, the two authorization-adjacent rejections above, provider summary
+aggregation and sorting, and daily trend bucketing across a day boundary).
+**NOT verified:** these endpoints have never received a request from a
+real NestJS HTTP server or a live database — all tests mock `PrismaService`
+and `fetch`. See "Known limitations" / the Docker blocker above.
 
 <!-- New entries go above this line -->
 

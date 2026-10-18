@@ -4,6 +4,7 @@ import { GithubModule } from "./github/github.module";
 import { HealthModule } from "./health/health.module";
 import { OrganizationsModule } from "./organizations/organizations.module";
 import { PrismaModule } from "./prisma/prisma.module";
+import { TelemetryModule } from "./telemetry/telemetry.module";
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { PrismaModule } from "./prisma/prisma.module";
     HealthModule,
     OrganizationsModule,
     GithubModule,
+    TelemetryModule,
   ],
 })
 export class AppModule {}
