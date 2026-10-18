@@ -1,0 +1,24 @@
+name: trace
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-trace}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-trace_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-trace}
+    ports:
+      # Host port 5433 (not 5432) to avoid clashing with any other local
+      # Postgres instance. Matches apps/api/.env.example's DATABASE_URL.
+      - "${POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - trace_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trace}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  trace_postgres_data:

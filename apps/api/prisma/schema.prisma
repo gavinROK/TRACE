@@ -1,0 +1,217 @@
+// TRACE data model.
+//
+// Mirrors the org/department/developer hierarchy the frontend already
+// renders (apps/web/lib/types.ts) and adds the records needed for real
+// GitHub integration, API telemetry, and security alerting.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A tenant. All other rows are scoped to one organization; cross-org
+/// access is what the API's authorization layer must prevent.
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  apiKeys       ApiKey[]
+  departments   Department[]
+  developers    Developer[]
+  installations GithubInstallation[]
+  repositories  Repository[]
+  activityEvents ActivityEvent[]
+  apiUsageEvents ApiUsageEvent[]
+  securityAlerts SecurityAlert[]
+
+  @@map("organizations")
+}
+
+/// Development-only authorization mechanism: a bearer key scoped to one
+/// organization. Stands in for a real auth/session system (see
+/// docs/DEVELOPMENT_STATUS.md "Known limitations") — do not deploy this
+/// as-is. Only the key's hash is stored.
+model ApiKey {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  label          String
+  hashedKey      String       @unique
+  createdAt      DateTime     @default(now())
+
+  @@map("api_keys")
+}
+
+model Department {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  name           String
+  description    String?
+  createdAt      DateTime     @default(now())
+
+  developers Developer[]
+
+  @@map("departments")
+}
+
+/// A developer identity within an organization. Not necessarily linked to
+/// a GitHub account yet — `githubLogin` is set once a GitHub sync matches
+/// one.
+model Developer {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  department     Department?  @relation(fields: [departmentId], references: [id])
+  departmentId   String?
+  name           String
+  role           String
+  email          String?
+  githubLogin    String?
+  createdAt      DateTime     @default(now())
+
+  activityEvents ActivityEvent[]
+  apiUsageEvents ApiUsageEvent[]
+  securityAlerts SecurityAlert[]
+
+  @@unique([organizationId, email])
+  @@map("developers")
+}
+
+/// One GitHub App installation on an org/user account, connected by an
+/// authorized member of that organization.
+model GithubInstallation {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  installationId BigInt       @unique
+  accountLogin   String
+  accountType    String
+  createdAt      DateTime     @default(now())
+
+  repositories Repository[]
+
+  @@map("github_installations")
+}
+
+model Repository {
+  id             String              @id @default(cuid())
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  organizationId String
+  installation   GithubInstallation? @relation(fields: [installationId], references: [id], onDelete: SetNull)
+  installationId String?
+  githubId       BigInt              @unique
+  name           String
+  fullName       String
+  isPrivate      Boolean             @default(false)
+  defaultBranch  String              @default("main")
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  activityEvents ActivityEvent[]
+
+  @@map("repositories")
+}
+
+/// A generic feed of developer/repository activity: commits, pull requests,
+/// reviews, etc. `type` is a free-form, documented string (see
+/// apps/api/src/activity/activity-event-type.ts) rather than an enum, since
+/// GitHub's own event vocabulary is larger than we need to hard-code up
+/// front.
+model ActivityEvent {
+  id             String        @id @default(cuid())
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  organizationId String
+  developer      Developer?    @relation(fields: [developerId], references: [id])
+  developerId    String?
+  repository     Repository?   @relation(fields: [repositoryId], references: [id])
+  repositoryId   String?
+  type           String
+  /// GitHub's commit sha, `pull_request` number, etc. — whatever makes
+  /// this event idempotent to re-sync. Null for events with no natural
+  /// external identity.
+  externalId     String?
+  occurredAt     DateTime
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+
+  @@unique([organizationId, type, externalId])
+  @@index([organizationId, occurredAt])
+  @@map("activity_events")
+}
+
+/// Which kind of identity reported an API usage event. TRACE must not
+/// assume every request can be attributed to a specific employee.
+enum ActorType {
+  VERIFIED
+  INFERRED
+  UNKNOWN
+}
+
+/// One reported unit of API usage, submitted by the telemetry SDK. Never
+/// contains API keys, prompt/response bodies, or other sensitive payloads
+/// — see apps/api/src/telemetry for the enforced shape.
+model ApiUsageEvent {
+  id                String       @id @default(cuid())
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  organizationId    String
+  developer         Developer?   @relation(fields: [developerId], references: [id])
+  developerId       String?
+  actorType         ActorType    @default(UNKNOWN)
+  provider          String
+  service           String
+  requestCount      Int          @default(1)
+  tokenCount         Int?
+  estimatedCostUsd   Float?
+  latencyMs          Int?
+  errorCount         Int          @default(0)
+  occurredAt         DateTime
+  createdAt          DateTime     @default(now())
+
+  @@index([organizationId, occurredAt])
+  @@index([organizationId, provider])
+  @@map("api_usage_events")
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  DISMISSED
+}
+
+/// A deterministic security detection. `evidence` holds the structured
+/// facts the rule evaluated; `reason` is the human-readable explanation of
+/// why those facts triggered this alert. See apps/api/src/security for the
+/// rule engine that produces these.
+model SecurityAlert {
+  id                String        @id @default(cuid())
+  organization      Organization  @relation(fields: [organizationId], references: [id])
+  organizationId    String
+  developer         Developer?    @relation(fields: [developerId], references: [id])
+  developerId       String?
+  type              String
+  severity          AlertSeverity
+  status            AlertStatus   @default(OPEN)
+  detectedAt        DateTime      @default(now())
+  reason            String
+  recommendedSteps  String[]
+  evidence          Json
+  createdAt         DateTime      @default(now())
+
+  @@index([organizationId, status])
+  @@map("security_alerts")
+}

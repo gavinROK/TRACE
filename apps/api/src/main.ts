@@ -4,7 +4,10 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody: true preserves the exact request bytes on req.rawBody so the
+  // GitHub webhook handler can verify X-Hub-Signature-256 against them —
+  // signature verification does not work against a re-serialized body.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   app.useGlobalPipes(
     new ValidationPipe({
