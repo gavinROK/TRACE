@@ -8,7 +8,10 @@ interface DetailPanelProps {
 
 export function DetailPanel({ entity, childEntities, onClose }: DetailPanelProps) {
   return (
-    <aside className="absolute right-4 top-4 z-10 w-80 rounded-xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-sm">
+    <aside
+      data-testid="detail-panel"
+      className="absolute right-4 top-4 z-10 w-80 rounded-xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-sm"
+    >
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-xs uppercase tracking-wide text-slate-500">{entity.kind}</div>

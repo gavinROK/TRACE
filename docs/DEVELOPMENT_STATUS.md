@@ -57,7 +57,7 @@ depend on. Nothing in `apps/web` is being changed — this is additive.
       API. See "Known limitations" before claiming this works end-to-end.
 - [x] API telemetry ingestion SDK + aggregation endpoints (see log below)
 - [x] Deterministic security alert rule engine (see log below)
-- [ ] Playwright tests for the existing graph UI
+- [x] Playwright tests for the existing graph UI (see log below)
 
 This list is updated as each item lands; see the detailed log below for
 what's actually been verified so far.
@@ -234,6 +234,39 @@ Jest tests total (23 new in this change: 18 for the three rules'
 threshold/severity math, 5 for the detection service's dedupe logic and
 rule aggregation).
 
+### Playwright end-to-end tests for the existing graph UI
+
+Added `apps/web/e2e/org-graph.spec.ts` (7 tests) against a real Chromium
+browser driving a real `next dev` server — these are genuine browser
+interactions, not mocked. Added small `data-testid` attributes to
+`EntityNode` and `DetailPanel` (invisible, behavior-preserving) so
+selectors don't depend on fragile text/DOM-structure matching. Covers:
+initial render (header, stats row, root/department/developer nodes,
+metric leaves correctly collapsed by default), expanding/collapsing a
+developer to reveal its GitHub/API/Security leaves, collapsing/expanding
+a department to hide/show its developers, opening and closing the detail
+panel, the activity-level filter, the metric-kind visibility toggle, and
+the JSON Canvas export (via a real Playwright download event).
+
+One real failure was caught and fixed during this work: the first draft
+of the "renders the header" test used `getByText("TRACE")`, which matched
+both the header and an unrelated body string containing "TRACE" and threw
+a strict-mode violation — fixed by scoping to the header's role instead.
+That's the kind of thing this suite exists to catch.
+
+**Run locally** with `npm run test:e2e --workspace apps/web` (needs
+Chromium installed once via `npx playwright install chromium` inside
+`apps/web`). **Deliberately not wired into CI yet** — the script is named
+`test:e2e`, not `test`, specifically so the root `test` fan-out (and
+`.github/workflows/ci.yml`) doesn't pick it up; adding it there would
+need a browser-install step added to the workflow, which is real added
+CI complexity/time that wasn't asked for. Tracked as upcoming work below.
+
+**Verified:** all 7 tests pass against a real server + real browser (run
+twice: once that caught the failure above, once clean after the fix).
+Full repo-wide `lint`/`typecheck`/`test`/`build` across all three
+workspaces still pass after these additions.
+
 <!-- New entries go above this line -->
 
 ## Known limitations (be honest about these)
@@ -265,5 +298,8 @@ rule aggregation).
 - Activity timelines.
 - Real GitHub App registration and end-to-end validation once credentials
   are available.
-- Wiring a `test` step into CI once there's a meaningful test suite to run
-  there (currently CI runs lint/typecheck/build only).
+- Adding the Playwright e2e suite to CI (needs a browser-install step in
+  the workflow — deliberately not done yet, see the log entry above).
+- Running Prisma migrations + the seed script against a live database
+  once Docker is responsive again (see the blocker noted above), then a
+  real end-to-end GitHub webhook/API smoke test against that database.

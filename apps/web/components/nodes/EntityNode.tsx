@@ -43,6 +43,7 @@ export function EntityNode({ data }: NodeProps<EntityNode>) {
 
   return (
     <div
+      data-testid={`node-${entity.id}`}
       className={`group w-[220px] rounded-lg border px-3 py-2.5 shadow-lg backdrop-blur-sm transition-colors cursor-pointer ${
         isSelected
           ? "border-cyan-400 bg-slate-800/90 ring-1 ring-cyan-400/50"
@@ -67,6 +68,7 @@ export function EntityNode({ data }: NodeProps<EntityNode>) {
           <button
             type="button"
             aria-label={isCollapsed ? "Expand" : "Collapse"}
+            data-testid={`node-toggle-${entity.id}`}
             onClick={(event) => {
               event.stopPropagation();
               onToggleCollapse(entity.id);
