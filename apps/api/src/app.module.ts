@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
 import { GithubModule } from "./github/github.module";
+import { GraphModule } from "./graph/graph.module";
 import { HealthModule } from "./health/health.module";
 import { OrganizationsModule } from "./organizations/organizations.module";
 import { PrismaModule } from "./prisma/prisma.module";
@@ -16,6 +17,7 @@ import { TelemetryModule } from "./telemetry/telemetry.module";
     GithubModule,
     TelemetryModule,
     SecurityModule,
+    GraphModule,
   ],
 })
 export class AppModule {}
