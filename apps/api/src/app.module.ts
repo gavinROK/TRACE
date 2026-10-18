@@ -4,6 +4,7 @@ import { GithubModule } from "./github/github.module";
 import { HealthModule } from "./health/health.module";
 import { OrganizationsModule } from "./organizations/organizations.module";
 import { PrismaModule } from "./prisma/prisma.module";
+import { SecurityModule } from "./security/security.module";
 import { TelemetryModule } from "./telemetry/telemetry.module";
 
 @Module({
@@ -14,6 +15,7 @@ import { TelemetryModule } from "./telemetry/telemetry.module";
     OrganizationsModule,
     GithubModule,
     TelemetryModule,
+    SecurityModule,
   ],
 })
 export class AppModule {}

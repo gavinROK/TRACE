@@ -56,7 +56,7 @@ depend on. Nothing in `apps/web` is being changed — this is additive.
       hand-constructed webhook payloads, not exercised against the live
       API. See "Known limitations" before claiming this works end-to-end.
 - [x] API telemetry ingestion SDK + aggregation endpoints (see log below)
-- [ ] Deterministic security alert rule engine
+- [x] Deterministic security alert rule engine (see log below)
 - [ ] Playwright tests for the existing graph UI
 
 This list is updated as each item lands; see the detailed log below for
@@ -196,6 +196,43 @@ aggregation and sorting, and daily trend bucketing across a day boundary).
 **NOT verified:** these endpoints have never received a request from a
 real NestJS HTTP server or a live database — all tests mock `PrismaService`
 and `fetch`. See "Known limitations" / the Docker blocker above.
+
+### Deterministic security alert rule engine
+
+Added `apps/api/src/security`: a `SecurityRule` interface and three
+implementations, each computing only from data already in our own
+database (no dependency on GitHub's audit log API, which most accounts
+can't call anyway):
+
+- `ApiUsageSpikeRule` — a provider's last-24h request volume vs. its own
+  trailing 7-day daily average.
+- `ElevatedApiErrorRateRule` — a provider's last-24h error rate.
+- `UnusualCommitVolumeRule` — a developer's last-24h commit count vs.
+  their own trailing 13-day average.
+
+Every finding carries `reason` and `recommendedSteps` written as "worth a
+human look," never as an accusation — per the explicit requirement not to
+label anyone malicious from a statistical anomaly alone.
+`SecurityDetectionService.runDetection` runs all registered rules for an
+org and persists findings as `SecurityAlert` rows, skipping a finding if
+an equivalent alert (same type + developer scope) is already `OPEN` within
+a 24h dedupe window, so re-running detection doesn't spam duplicates.
+`SecurityAlertsController` exposes `GET /security/alerts`,
+`POST /security/alerts/run` (manual trigger — there is no scheduler; see
+upcoming work), and `PATCH /security/alerts/:id/status`.
+
+**Full dependency-injection graph verified end-to-end:** built `apps/api`
+and ran the compiled server directly. Every module (Health, Organizations,
+Github, Telemetry, Security) initialized and every route mapped
+correctly; the *only* failure was `PrismaClientInitializationError: Can't
+reach database server at localhost:5433` — i.e. the sole remaining gap is
+the live database connection (blocked on the Docker issue below), not
+anything in the application wiring itself.
+
+**Verified:** typecheck/lint/build clean; `apps/api` is now at 52 passing
+Jest tests total (23 new in this change: 18 for the three rules'
+threshold/severity math, 5 for the detection service's dedupe logic and
+rule aggregation).
 
 <!-- New entries go above this line -->
 
