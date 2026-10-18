@@ -6,6 +6,10 @@ covers only what's specific to this app.
 
 ## Running locally
 
+This app is part of an npm workspaces monorepo — see the
+[root README](../../README.md) to install from the repository root. To run
+just this app directly:
+
 ```bash
 npm install
 npm run dev
@@ -13,9 +17,6 @@ npm run dev
 
 Open http://localhost:3000. The page auto-updates as you edit files under
 `app/`, `components/`, or `lib/`.
-
-If `next dev` fails with a Turbopack worker/port error on your machine, run
-`npm run dev -- --webpack` instead (see root README for details).
 
 ## Layout
 
@@ -39,8 +40,9 @@ If `next dev` fails with a Turbopack worker/port error on your machine, run
 ## Scripts
 
 ```bash
-npm run dev     # start the dev server
-npm run build   # production build
-npm run start   # run a production build
-npm run lint    # ESLint
+npm run dev        # start the dev server
+npm run build      # production build
+npm run start       # run a production build
+npm run lint        # ESLint
+npm run typecheck   # tsc --noEmit
 ```

@@ -14,16 +14,7 @@ Phase 1 delivers a fully working **frontend-only** prototype: a Next.js app
 with an interactive org graph driven by realistic simulated data. There is no
 backend, database, or real integration yet — those arrive in later phases.
 
-| Phase | Scope | Status |
-| --- | --- | --- |
-| 1 | Next.js + React Flow org graph, simulated data | ✅ Done |
-| 2 | NestJS backend + PostgreSQL + Prisma | Not started |
-| 3 | GitHub integration | Not started |
-| 4 | Developer activity analytics | Not started |
-| 5 | API telemetry | Not started |
-| 6 | Security event detection | Not started |
-
-## What's in Phase 1
+## Features (Phase 1)
 
 - **Interactive org graph** — Organization → Department → Developer →
   GitHub / API Usage / Security metrics, rendered with
@@ -40,6 +31,31 @@ backend, database, or real integration yet — those arrive in later phases.
 
 All data in Phase 1 (`apps/web/lib/data.ts`) is simulated — no real GitHub,
 API, or security data is collected.
+
+## Installation
+
+Requirements: **Node.js 20+** and npm.
+
+```bash
+git clone https://github.com/<your-org>/TRACE.git
+cd TRACE
+npm install   # installs all workspaces (apps/web today; future apps/api too)
+npm run dev   # starts the web app at http://localhost:3000
+```
+
+The repository root is an **npm workspaces** monorepo, so a single
+`npm install` at the root installs every app under `apps/`. Per-app commands
+can still be run directly (e.g. `cd apps/web && npm run dev`), or from the
+root via `npm run <script> --workspace apps/web`.
+
+Root-level scripts (each fans out to every workspace that defines the script):
+
+```bash
+npm run dev        # starts apps/web's dev server
+npm run build       # production build of every app
+npm run lint        # ESLint across every app
+npm run typecheck   # tsc --noEmit across every app
+```
 
 ## Project structure
 
@@ -59,42 +75,32 @@ components/       OrgGraph, DetailPanel, FilterBar, StatsRow, node renderers
 lib/              Domain types, simulated data, layout, stats, JSON Canvas
 ```
 
-## Running locally
-
-Requirements: Node.js 20+.
-
-```bash
-cd apps/web
-npm install
-npm run dev
-```
-
-Then open http://localhost:3000.
-
-> **Turbopack note:** `next dev`/`next build` use Turbopack by default in
-> this Next.js version. On some local setups the Turbopack CSS pipeline can
-> fail to spawn its worker process (an `Operation not permitted` /
-> port-binding error, unrelated to this project's code). If you hit that,
-> fall back to webpack:
-> ```bash
-> npm run dev -- --webpack
-> npm run build -- --webpack
-> ```
-
-Other commands (run from `apps/web/`):
-
-```bash
-npm run build   # production build
-npm run lint    # ESLint
-npx tsc --noEmit  # type-check
-```
-
 ## Technology
 
 - **Frontend:** Next.js, TypeScript, React, Tailwind CSS, React Flow
 - **Backend (Phase 2+):** NestJS, TypeScript
 - **Database (Phase 2+):** PostgreSQL, Prisma
-- **Dev tooling:** Docker Compose (added in Phase 2), Git
+- **Dev tooling:** npm workspaces, GitHub Actions CI, Docker Compose (added
+  in Phase 2), Git
+
+## Development roadmap
+
+| Phase | Scope | Status |
+| --- | --- | --- |
+| 1 | Next.js + React Flow org graph, simulated data | ✅ Done |
+| 2 | NestJS backend + PostgreSQL + Prisma | Not started |
+| 3 | GitHub integration | Not started |
+| 4 | Developer activity analytics | Not started |
+| 5 | API telemetry | Not started |
+| 6 | Security event detection | Not started |
+
+Each phase is implemented, verified (lint, type-check, build, and manual
+testing), and documented before the next one begins.
+
+## Continuous integration
+
+Every pull request runs lint, type-check, and a production build via
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Security principles
 
@@ -107,7 +113,11 @@ TRACE is designed around a few hard rules that apply to every phase:
 - Secrets and API tokens are never placed in frontend code — they live only
   in the backend, added in Phase 2.
 
+## License
+
+[MIT](LICENSE)
+
 ## Contributing
 
-This project is built in stages (see the phase table above). Each phase is
+This project is built in stages (see the roadmap above). Each phase is
 implemented, verified, and documented before the next one begins.
