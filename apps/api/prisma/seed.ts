@@ -61,22 +61,36 @@ async function main() {
     developerByEmail.set(developer.email, row);
   }
 
-  // Simulated device inventory — deliberately varied posture (healthy,
-  // at-risk, critical, and genuinely unknown) so the UI and the
-  // DevicePostureRule security rule both have something real to show.
-  // One device has no owner at all (shared infrastructure), matching how
-  // a real inventory looks.
+  function daysAgo(days: number): Date {
+    return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  }
+
+  // Simulated device + infrastructure asset inventory — deliberately
+  // varied posture (healthy, at-risk, critical, and genuinely unknown)
+  // and check-in recency (recent, stale, and never) so the UI and all
+  // three device security rules have real, varied data to show. Three
+  // of these are network infrastructure (no owner — department-assigned
+  // instead), matching how a real inventory looks: not everything is a
+  // person's laptop.
   const devices: Array<{
     id: string;
     name: string;
-    deviceType: "LAPTOP" | "DESKTOP" | "SERVER";
+    deviceType:
+      | "LAPTOP"
+      | "DESKTOP"
+      | "SERVER"
+      | "SWITCH"
+      | "ROUTER"
+      | "VIRTUAL_MACHINE";
     operatingSystem: string;
     osVersion: string;
     ownerEmail?: string;
+    departmentId?: string;
     diskEncrypted: boolean | null;
     firewallEnabled: boolean | null;
     osUpToDate: boolean | null;
     screenLockEnabled: boolean | null;
+    lastCheckInAt: Date | null;
   }> = [
     {
       id: "device-ada-laptop",
@@ -89,6 +103,7 @@ async function main() {
       firewallEnabled: true,
       osUpToDate: true,
       screenLockEnabled: true,
+      lastCheckInAt: daysAgo(5),
     },
     {
       id: "device-marcus-laptop",
@@ -101,6 +116,7 @@ async function main() {
       firewallEnabled: true,
       osUpToDate: true,
       screenLockEnabled: true,
+      lastCheckInAt: daysAgo(10),
     },
     {
       id: "device-priya-laptop",
@@ -113,6 +129,10 @@ async function main() {
       firewallEnabled: true,
       osUpToDate: false,
       screenLockEnabled: false,
+      // Deliberately stale (>90 days) as well as CRITICAL posture, so
+      // this one device demonstrates both DevicePostureRule and
+      // DeviceDataQualityRule firing simultaneously with different types.
+      lastCheckInAt: daysAgo(200),
     },
     {
       id: "device-devon-laptop",
@@ -121,11 +141,14 @@ async function main() {
       operatingSystem: "Ubuntu",
       osVersion: "22.04",
       ownerEmail: "devon.lee@acme-corp.example",
-      // Manually enrolled, never checked — genuinely unknown, not a finding.
+      // Manually enrolled, never checked — genuinely unknown, not a
+      // finding from DevicePostureRule. Combined with no check-in date
+      // at all, DeviceDataQualityRule should report both as ONE finding.
       diskEncrypted: null,
       firewallEnabled: null,
       osUpToDate: null,
       screenLockEnabled: null,
+      lastCheckInAt: null,
     },
     {
       id: "device-isabel-laptop",
@@ -138,6 +161,7 @@ async function main() {
       firewallEnabled: true,
       osUpToDate: true,
       screenLockEnabled: true,
+      lastCheckInAt: daysAgo(2),
     },
     {
       id: "device-noah-desktop",
@@ -150,6 +174,7 @@ async function main() {
       firewallEnabled: true,
       osUpToDate: false,
       screenLockEnabled: true,
+      lastCheckInAt: daysAgo(45),
     },
     {
       id: "device-sofia-laptop",
@@ -162,6 +187,7 @@ async function main() {
       firewallEnabled: true,
       osUpToDate: true,
       screenLockEnabled: true,
+      lastCheckInAt: daysAgo(1),
     },
     {
       id: "device-prod-db-server",
@@ -169,22 +195,64 @@ async function main() {
       deviceType: "SERVER",
       operatingSystem: "Ubuntu",
       osVersion: "22.04",
-      // No owner — shared infrastructure, not any one person's device.
+      // No owner, no department — fully unowned shared infrastructure.
       diskEncrypted: true,
       firewallEnabled: false,
       osUpToDate: true,
       screenLockEnabled: null,
+      lastCheckInAt: null,
+    },
+    {
+      id: "device-core-switch",
+      name: "core-switch-01",
+      deviceType: "SWITCH",
+      operatingSystem: "Cisco IOS",
+      osVersion: "15.2(7)E",
+      departmentId: operations.id,
+      diskEncrypted: null,
+      firewallEnabled: false,
+      osUpToDate: null,
+      screenLockEnabled: null,
+      lastCheckInAt: daysAgo(15),
+    },
+    {
+      id: "device-edge-router",
+      name: "edge-router-01",
+      deviceType: "ROUTER",
+      operatingSystem: "pfSense",
+      osVersion: "2.7.2",
+      departmentId: operations.id,
+      diskEncrypted: null,
+      firewallEnabled: true,
+      osUpToDate: true,
+      screenLockEnabled: null,
+      lastCheckInAt: daysAgo(20),
+    },
+    {
+      id: "device-ci-runner-vm",
+      name: "ci-runner-01",
+      deviceType: "VIRTUAL_MACHINE",
+      operatingSystem: "Ubuntu",
+      osVersion: "24.04",
+      departmentId: engineering.id,
+      diskEncrypted: true,
+      firewallEnabled: true,
+      osUpToDate: false,
+      screenLockEnabled: null,
+      lastCheckInAt: daysAgo(5),
     },
   ];
 
+  const deviceRowById = new Map<string, { id: string }>();
   for (const device of devices) {
     const owner = device.ownerEmail ? developerByEmail.get(device.ownerEmail) : undefined;
-    await prisma.device.upsert({
+    const row = await prisma.device.upsert({
       where: { id: device.id },
       create: {
         id: device.id,
         organizationId: organization.id,
         ownerId: owner?.id,
+        departmentId: device.departmentId,
         name: device.name,
         deviceType: device.deviceType,
         operatingSystem: device.operatingSystem,
@@ -194,9 +262,11 @@ async function main() {
         firewallEnabled: device.firewallEnabled,
         osUpToDate: device.osUpToDate,
         screenLockEnabled: device.screenLockEnabled,
+        lastCheckInAt: device.lastCheckInAt,
       },
       update: {
         ownerId: owner?.id,
+        departmentId: device.departmentId,
         name: device.name,
         operatingSystem: device.operatingSystem,
         osVersion: device.osVersion,
@@ -204,6 +274,78 @@ async function main() {
         firewallEnabled: device.firewallEnabled,
         osUpToDate: device.osUpToDate,
         screenLockEnabled: device.screenLockEnabled,
+        lastCheckInAt: device.lastCheckInAt,
+      },
+    });
+    deviceRowById.set(device.id, row);
+  }
+
+  // Simulated software inventory — a handful of installs across a couple
+  // of devices, enough to demonstrate the feature without hand-seeding
+  // every device's full software list.
+  const softwareInstallations = [
+    {
+      id: "sw-ada-vscode",
+      deviceId: "device-ada-laptop",
+      name: "Visual Studio Code",
+      version: "1.95.0",
+      publisher: "Microsoft",
+      installedAt: daysAgo(60),
+    },
+    {
+      id: "sw-ada-docker",
+      deviceId: "device-ada-laptop",
+      name: "Docker Desktop",
+      version: "4.34.0",
+      publisher: "Docker, Inc.",
+      installedAt: daysAgo(40),
+    },
+    {
+      id: "sw-switch-firmware",
+      deviceId: "device-core-switch",
+      name: "Cisco IOS Firmware",
+      version: "15.2(7)E",
+      publisher: "Cisco Systems",
+      installedAt: null,
+    },
+    {
+      id: "sw-ci-runner-docker",
+      deviceId: "device-ci-runner-vm",
+      name: "Docker Engine",
+      version: "27.3.1",
+      publisher: "Docker, Inc.",
+      installedAt: daysAgo(90),
+    },
+    {
+      id: "sw-ci-runner-node",
+      deviceId: "device-ci-runner-vm",
+      name: "Node.js",
+      version: "22.9.0",
+      publisher: "Node.js Foundation",
+      installedAt: daysAgo(90),
+    },
+  ];
+
+  for (const software of softwareInstallations) {
+    const device = deviceRowById.get(software.deviceId);
+    if (!device) continue;
+    await prisma.softwareInstallation.upsert({
+      where: { id: software.id },
+      create: {
+        id: software.id,
+        organizationId: organization.id,
+        deviceId: device.id,
+        name: software.name,
+        version: software.version,
+        publisher: software.publisher,
+        installedAt: software.installedAt,
+        source: "MANUAL",
+      },
+      update: {
+        name: software.name,
+        version: software.version,
+        publisher: software.publisher,
+        installedAt: software.installedAt,
       },
     });
   }
