@@ -29,6 +29,7 @@ model Organization {
   activityEvents ActivityEvent[]
   apiUsageEvents ApiUsageEvent[]
   securityAlerts SecurityAlert[]
+  devices        Device[]
 
   @@map("organizations")
 }
@@ -79,6 +80,7 @@ model Developer {
   activityEvents ActivityEvent[]
   apiUsageEvents ApiUsageEvent[]
   securityAlerts SecurityAlert[]
+  ownedDevices   Device[]
 
   @@unique([organizationId, email])
   @@map("developers")
@@ -220,4 +222,57 @@ model SecurityAlert {
 
   @@index([organizationId, status])
   @@map("security_alerts")
+}
+
+enum DeviceType {
+  LAPTOP
+  DESKTOP
+  MOBILE
+  SERVER
+  OTHER
+}
+
+/// How a device's record came to exist. AGENT is reserved for a future
+/// endpoint agent (see docs/DEVELOPMENT_STATUS.md) — nothing writes it yet;
+/// included now so that feature doesn't need a migration to add it later.
+enum DeviceEnrollmentType {
+  MANUAL
+  SIMULATED
+  AGENT
+}
+
+/// A device inventory record. Ownership is a plain foreign key, not a
+/// structural position in the org graph — like Repository, a device is
+/// rendered under its own top-level branch, with its owner (if any) shown
+/// as a field, not as a parent/child nesting (the graph's entities form a
+/// single-parent tree; letting a device appear under both its owner and a
+/// flat "Devices" branch isn't representable in that shape without a
+/// larger rewrite).
+///
+/// Posture fields are nullable — a device TRACE has never heard from
+/// (manually enrolled, no agent) genuinely has *unknown* posture, which is
+/// a different fact than "known to be disabled." Only an explicit `false`
+/// counts as a finding; `null` never does (see DevicePostureRule).
+model Device {
+  id                 String               @id @default(cuid())
+  organization       Organization         @relation(fields: [organizationId], references: [id])
+  organizationId     String
+  owner              Developer?           @relation(fields: [ownerId], references: [id])
+  ownerId            String?
+  name               String
+  deviceType         DeviceType
+  operatingSystem    String
+  osVersion          String
+  serialNumber       String?
+  enrollmentType     DeviceEnrollmentType @default(MANUAL)
+  diskEncrypted      Boolean?
+  firewallEnabled    Boolean?
+  osUpToDate         Boolean?
+  screenLockEnabled  Boolean?
+  lastCheckInAt      DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  @@index([organizationId])
+  @@map("devices")
 }

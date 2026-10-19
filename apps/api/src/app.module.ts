@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConfigModule } from "@nestjs/config";
+import { DevicesModule } from "./devices/devices.module";
 import { GithubModule } from "./github/github.module";
 import { GraphModule } from "./graph/graph.module";
 import { HealthModule } from "./health/health.module";
@@ -17,6 +18,7 @@ import { TelemetryModule } from "./telemetry/telemetry.module";
     GithubModule,
     TelemetryModule,
     SecurityModule,
+    DevicesModule,
     GraphModule,
   ],
 })
