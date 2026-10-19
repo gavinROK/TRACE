@@ -102,11 +102,35 @@ medium orgs. Preserving everything above; this phase is additive.
       `Devices` branch off the organization, each device showing its
       owner/posture) and into security detection (`DevicePostureRule` —
       see log below for all of it, verified live end-to-end).
+- [x] **Infrastructure assets** — `Device` extended (not duplicated) with
+      `SWITCH`/`ROUTER`/`ACCESS_POINT`/`VIRTUAL_MACHINE` types and an
+      independent, nullable `departmentId` (a switch can belong to a
+      department with no personal owner at all — ownership and
+      department assignment are orthogonal). Three infra assets seeded
+      (`core-switch-01`, `edge-router-01`, `ci-runner-01`).
+- [x] **Software inventory** — `SoftwareInstallation` model (one row per
+      device per installed app: name/version/publisher/installedAt),
+      manual entry and CSV import (`POST /devices/:id/software`, source
+      explicitly tagged `MANUAL` or `CSV_IMPORT`, never inferred). Device
+      profile panel shows the list, an inline add form, and a CSV file
+      picker; CSV is parsed client-side (see "Known limitations" for the
+      parser's documented quoted-comma gap).
+- [x] **Device security posture indicators beyond pass/fail** —
+      `DeviceDataQualityRule` flags devices with genuinely unknown
+      posture/missing check-in data (`device_missing_security_info`) and
+      devices that haven't checked in within 90 days
+      (`device_stale_checkin`), kept explicitly distinct from
+      `DevicePostureRule`'s confirmed-risk findings (`device_posture_risk`)
+      — unknown is never reported as a risk.
+- [x] **IT workflows** — a device inventory panel (search by name/owner/
+      department/OS/serial, filter by type and posture status, summary
+      tiles) and device profile panels, both reachable from the graph.
 - [ ] **Not yet started** (explicitly out of scope for this phase, per
-      plan): software inventory, infrastructure assets beyond devices,
-      and endpoint agents. `DeviceEnrollmentType` already reserves an
-      `AGENT` value so that feature won't need its own migration later,
-      but nothing writes it yet — see "Known limitations."
+      plan): network scanning, endpoint agents, and relationships beyond
+      device↔owner/department (e.g. device↔application, device↔repository
+      as graph edges). `DeviceEnrollmentType` already reserves an `AGENT`
+      value so that feature won't need its own migration later, but
+      nothing writes it yet — see "Known limitations."
 
 This list is updated as each item lands; see the detailed log below for
 what's actually been verified so far.
@@ -115,6 +139,129 @@ what's actually been verified so far.
 
 Entries are appended chronologically, newest first. Each entry says exactly
 what was verified and how.
+
+### Infrastructure assets, software inventory, and device IT workflows
+
+Extended the existing `Device` model rather than building a parallel asset
+system, per explicit instruction — every change below is additive to what
+"Device inventory" (log entry further down) already built.
+
+**Backend:**
+- `Device` gained `SWITCH`/`ROUTER`/`ACCESS_POINT`/`VIRTUAL_MACHINE` types
+  and an independently-nullable `departmentId` (ownership and department
+  assignment are orthogonal — a device can have either, both, or
+  neither). `EnrollDeviceDto` validates `departmentId` belongs to the
+  caller's org, same as it already did for `ownerId`.
+- New `SoftwareInstallation` model: one row per device per installed
+  app (`name`, optional `version`/`publisher`/`installedAt`), denormalized
+  rather than a separate Application catalog since nothing yet needs
+  cross-device app queries. `source: MANUAL | CSV_IMPORT` is set
+  explicitly by the caller, never inferred. New
+  `POST /devices/:id/software` accepts a plain JSON array (the frontend
+  parses CSV client-side — see below) and bulk-creates via `createMany`,
+  validating the device belongs to the caller's org first (404 otherwise).
+- **Real bug found and fixed: `SecurityDetectionService`'s dedup only
+  keyed on `(organizationId, type, developerId)`.** Adding
+  `DeviceDataQualityRule` — which produces one finding per device,
+  several with no owner (`developerId: null`) and several sharing the
+  same type — exposed this immediately live: findings for distinct
+  devices silently collapsed into each other. Fixed by adding a
+  `dedupeKey` column (set by each rule to the finding's actual subject —
+  the device id for device rules, the provider for API rules, the
+  developer id for the commit-volume rule) and widening the dedup
+  `findFirst`/`create` to include it. Verified live before and after:
+  before the fix, seeding 9 devices with missing info produced fewer
+  than 9 alerts; after, exactly 9, each correctly attributed.
+- `DeviceDataQualityRule`: combines "posture is genuinely unknown" and
+  "no check-in recorded" into a *single* `device_missing_security_info`
+  finding per device (not two — an earlier version double-counted this
+  and would have incorrectly deduped the two findings against each
+  other within the same run), plus a separate MEDIUM
+  `device_stale_checkin` when `lastCheckInAt` is set but older than 90
+  days. Both are explicitly "unknown/stale," never conflated with
+  `DevicePostureRule`'s confirmed-risk findings.
+- Seed data: three infra assets (`core-switch-01` — Operations,
+  firewall explicitly off; `edge-router-01` — Operations, healthy;
+  `ci-runner-01` — Engineering VM, OS explicitly out of date), five
+  software rows across two devices, and realistic `lastCheckInAt` spread
+  across existing devices (one deliberately 200 days stale, one
+  deliberately `null`, most recent).
+- `GET /graph/snapshot` and its service now include each device's
+  `departmentId`/`departmentName`, `lastCheckInAt`, and full `software`
+  array, so the frontend gets everything in the one existing snapshot
+  call rather than a second round-trip per device.
+- Two new Prisma migrations (`20261019021927_infra_assets_and_software`,
+  `20261019022351_add_alert_dedupe_key`), applied via the established
+  `migrate diff` → `migrate deploy` workaround (no interactive TTY in
+  this environment for `migrate dev`).
+
+**Frontend:**
+- `DeviceProfilePanel` (replaces the generic field list for `device`
+  nodes): owner, department, type, OS, serial, enrollment, last
+  check-in, full posture, and the installed-software list with an
+  inline "add software" form and a CSV file picker — both call
+  `POST /devices/:id/software` and refetch the graph. Software
+  management controls are hidden in demo mode (`mode !== "live"`),
+  since demo data has no real device to post to.
+- `DeviceInventoryPanel` (replaces the generic list for the `deviceGroup`
+  node): search box (name/owner/department/OS/serial), device-type and
+  posture-status filters, five summary tiles (total + each posture
+  status), and a row list where clicking a device opens its profile —
+  wired through a new `onSelectEntity` callback threaded from
+  `OrgGraph` → `DetailPanel` → `DeviceInventoryPanel`.
+- `lib/csv.ts`: a minimal, explicitly-documented CSV parser (header row,
+  comma-separated, **no quoted-comma support** — see "Known
+  limitations"). Good enough for a first version; a real RFC 4180
+  parser is more than this needs right now.
+- `lib/device.ts`: shared `formatPostureFlag` and the device-type option
+  list, used by both new panels (previously a private helper duplicated
+  nowhere — now it has one home instead of two).
+
+**A real pre-existing test bug found while adding live coverage (not
+caused by this phase's code, but exposed by it):** the existing "device
+posture rule's findings appear as real security alerts" test filtered
+alert cards by device name only and took `.first()` — once
+`DeviceDataQualityRule` gave Priya's device a *second* alert (the new
+stale-checkin finding, alongside its existing posture-risk one),
+`.first()` started resolving to whichever of the two rendered first,
+not necessarily the posture-risk one the test meant to check. Fixed by
+also filtering on the alert-type text, same fix shape as the dedup bug
+above: scope by what you actually mean, not by what happens to be first
+today.
+
+**A real build-environment issue, not a code bug:** `next build` failed
+with a Turbopack panic ("binding to a port... Operation not permitted")
+caused by a stale `.next` cache left over from a `next dev` server that
+had been killed mid-session (Next.js 16's project-wide dev-server lock —
+see existing "Known limitations" note below — required stopping it
+before `next build` *or* a fresh `next dev` could run at all). Fixed by
+`rm -rf .next` before building; unrelated to anything in this phase's
+source changes.
+
+**Verified:**
+- Backend: 100 Jest tests total (up from 81 — new coverage for
+  `departmentId` validation on both accept/reject paths, `addSoftware`
+  rejecting an unknown device and bulk-creating with correct source
+  tagging and `installedAt` parsing, the dedup-collision fix itself via
+  a test that two findings sharing type+developerId but different
+  dedupeKeys both persist, `DeviceDataQualityRule`'s combined-finding
+  behavior and its stale-checkin threshold, and the graph snapshot's
+  department/software mapping). Live-verified via `curl` at every step,
+  including the dedup bug's before/after device counts.
+- Frontend: `lint`/`typecheck`/`build` clean. Demo suite 8/8 (one test
+  flaked under the 2-worker config due to environment resource
+  contention — confirmed pre-existing by passing cleanly at
+  `--workers=1`, both standalone and as a full run; not a regression).
+  Live suite 12/12 (4 new: software list + department display on the
+  profile panel, the inventory panel's search/filter/select-into-profile
+  flow, and the two new alert types appearing correctly — plus the
+  pre-existing-bug fix above). Manual add-software and CSV-import POSTs
+  verified directly against the live backend (correct `source` tagging
+  for both, correct `installedAt` parsing) and then deleted from the
+  database afterward — deliberately not given a permanent automated
+  test, same reasoning as device enrollment: there is no
+  `DELETE /devices/:id/software/:id` endpoint yet, so a permanent test
+  would leave rows with no way to clean up.
 
 ### GitHub organization onboarding UI, and a Playwright flakiness fix
 
@@ -685,15 +832,32 @@ test's own restoration step already correctly did.
   no rate limiting anywhere, including on the webhook and telemetry
   ingestion endpoints. Both are explicitly fine for local development,
   not for any real deployment.
-- **No device deletion/deprovisioning endpoint.** Devices can be enrolled
-  but not removed via the API — fine for a device *inventory*, not
-  sufficient for real offboarding workflows later.
-- **No real endpoint agent.** `DeviceEnrollmentType.AGENT` is reserved in
-  the schema but nothing implements it — all posture data today is
-  either hand-entered (manual enrollment) or simulated (seed script).
-  Per the explicit plan for this phase, agents are intentionally not
-  being built until the server-side device system (this work) is
-  functioning reliably.
+- **No device or software deletion endpoint.** Devices and
+  `SoftwareInstallation` rows can be created but not removed via the
+  API — fine for an inventory, not sufficient for real
+  offboarding/decommissioning workflows later. (This is also why the
+  live Playwright suite doesn't have a permanent test for enrollment,
+  manual add-software, or CSV import — see the relevant log entries for
+  how each was instead verified manually and cleaned up by hand.)
+- **No real endpoint agent, and no network scanning.** `DeviceEnrollmentType.
+  AGENT` is reserved in the schema but nothing implements it — all
+  posture and software data today is either hand-entered (manual
+  enrollment, manual software add, CSV import) or simulated (seed
+  script). Per explicit instruction, neither agents nor network
+  discovery/scanning are being built yet.
+- **The CSV importer is intentionally minimal.** `lib/csv.ts` splits on
+  commas and newlines with no support for quoted fields containing a
+  comma (e.g. a publisher name like `"Acme, Inc."` would misparse). A
+  real RFC 4180 parser is more than a first version needs; this is a
+  documented gap, not an oversight.
+- **Devices form a flat list under one `deviceGroup` node, not a
+  relationship graph.** Owner and department are shown as *fields* on
+  each device (`ownerName`/`departmentName`), not as additional graph
+  edges — the graph's entities are a single-parent tree, so a device
+  can't structurally nest under both its owner and a flat "Devices"
+  branch without a larger rewrite. There are no edges yet for
+  device↔software (beyond the profile panel's list),
+  device↔application, or device↔repository.
 
 ## Upcoming work (not started)
 
@@ -706,12 +870,13 @@ test's own restoration step already correctly did.
   the workflow — deliberately not done yet, see the log entry above).
 - A scheduler for GitHub sync and security detection (both currently
   manual-trigger-only endpoints — see their controllers' doc comments).
-- **Software inventory** and **infrastructure assets** beyond devices —
-  explicitly named in the Phase 2 product direction, not started.
-- **Endpoint agents** — planned per the product direction, but
-  intentionally not started until the server-side device system (now
-  built) has proven reliable, per explicit instruction.
-- A device deletion/deprovisioning endpoint.
-- Relationships between devices/applications beyond ownership (e.g.
-  "this device runs this software," "this device accesses this
-  repository") — out of scope for this phase's device-inventory start.
+- **Endpoint agents and network scanning** — planned per the product
+  direction, but intentionally not started per explicit instruction for
+  this phase.
+- A device/software deletion or deprovisioning endpoint.
+- Real relationship edges in the graph beyond device↔owner/department
+  fields (e.g. device↔application, device↔repository, device↔security
+  event as actual graph structure, not just a field on one node) —
+  explicitly named in the product direction as a future step.
+- A real RFC 4180 CSV parser (quoted fields, embedded commas) if CSV
+  import sees real-world use beyond the current simple format.

@@ -145,7 +145,10 @@ export function mapSnapshotToEntities(snapshot: GraphSnapshot): OrgEntity[] {
       serialNumber: device.serialNumber,
       enrollmentType: device.enrollmentType,
       ownerName: device.ownerName,
+      departmentName: device.departmentName,
       posture: device.posture,
+      lastCheckInAt: device.lastCheckInAt,
+      software: device.software,
     });
   }
 

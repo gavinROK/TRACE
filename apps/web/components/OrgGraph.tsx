@@ -220,8 +220,10 @@ function OrgGraphInner() {
           <DetailPanel
             entity={selectedEntity}
             childEntities={selectedChildren}
+            mode={mode}
             onClose={() => setSelectedId(null)}
             onDataChanged={refetch}
+            onSelectEntity={setSelectedId}
           />
         )}
       </div>

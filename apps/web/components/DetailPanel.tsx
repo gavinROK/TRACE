@@ -1,26 +1,47 @@
-import type { OrgEntity } from "@/lib/types";
+import type { DeviceEntity, OrgEntity } from "@/lib/types";
+import type { BackendMode } from "@/lib/useGraphData";
 import { ApiUsageDashboardPanel } from "@/components/ApiUsageDashboardPanel";
 import { SecurityAlertsPanel } from "@/components/SecurityAlertsPanel";
+import { DeviceProfilePanel } from "@/components/DeviceProfilePanel";
+import { DeviceInventoryPanel } from "@/components/DeviceInventoryPanel";
 
 interface DetailPanelProps {
   entity: OrgEntity;
   childEntities: OrgEntity[];
+  mode: BackendMode;
   onClose: () => void;
-  /** Called after an action in a panel changes backend data (e.g.
-   * resolving a security alert), so the graph can refetch and stay in
-   * sync with the database. Unused in demo mode. */
   onDataChanged?: () => void;
+  /** Lets a panel (e.g. the device inventory table) select another entity. */
+  onSelectEntity?: (id: string) => void;
 }
 
-export function DetailPanel({ entity, childEntities, onClose, onDataChanged }: DetailPanelProps) {
-  // These two are org-wide dashboards, not simple field lists — they fetch
-  // their own richer data on open, so they get dedicated panels instead of
-  // the generic field renderer below.
+export function DetailPanel({
+  entity,
+  childEntities,
+  mode,
+  onClose,
+  onDataChanged,
+  onSelectEntity,
+}: DetailPanelProps) {
   if (entity.kind === "apiUsageDashboard") {
     return <ApiUsageDashboardPanel onClose={onClose} />;
   }
   if (entity.kind === "securityAlertsGroup") {
     return <SecurityAlertsPanel onClose={onClose} onDataChanged={onDataChanged} />;
+  }
+  if (entity.kind === "device") {
+    return (
+      <DeviceProfilePanel entity={entity} mode={mode} onClose={onClose} onDataChanged={onDataChanged} />
+    );
+  }
+  if (entity.kind === "deviceGroup") {
+    return (
+      <DeviceInventoryPanel
+        devices={childEntities.filter((child): child is DeviceEntity => child.kind === "device")}
+        onClose={onClose}
+        onSelectDevice={onSelectEntity ?? (() => {})}
+      />
+    );
   }
 
   return (
@@ -42,11 +63,9 @@ export function DetailPanel({ entity, childEntities, onClose, onDataChanged }: D
           ✕
         </button>
       </div>
-
       <div className="mt-3 space-y-2 text-sm text-slate-300">
         <EntityFields entity={entity} />
       </div>
-
       {childEntities.length > 0 && (
         <div className="mt-4 border-t border-slate-800 pt-3">
           <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">
@@ -75,17 +94,11 @@ function Field({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function formatPostureFlag(value: boolean | null): string {
-  if (value === null) return "Unknown";
-  return value ? "Yes" : "No";
-}
-
 function EntityFields({ entity }: { entity: OrgEntity }) {
   switch (entity.kind) {
     case "organization":
     case "department":
     case "repositoryGroup":
-    case "deviceGroup":
       return <p className="text-slate-400">{entity.description}</p>;
     case "developer":
       return (
@@ -128,26 +141,10 @@ function EntityFields({ entity }: { entity: OrgEntity }) {
           <Field label="Open pull requests" value={entity.openPullRequestCount} />
         </>
       );
-    case "device":
-      return (
-        <>
-          <Field label="Owner" value={entity.ownerName ?? "Unassigned"} />
-          <Field label="Type" value={entity.deviceType} />
-          <Field label="Operating system" value={`${entity.operatingSystem} ${entity.osVersion}`} />
-          <Field label="Serial number" value={entity.serialNumber ?? "—"} />
-          <Field label="Enrollment" value={entity.enrollmentType} />
-          <div className="pt-1 text-xs uppercase tracking-wide text-slate-500">
-            Security posture — {entity.posture.status.replace("_", " ")}
-          </div>
-          <Field label="Disk encryption" value={formatPostureFlag(entity.posture.diskEncrypted)} />
-          <Field label="Firewall" value={formatPostureFlag(entity.posture.firewallEnabled)} />
-          <Field label="OS up to date" value={formatPostureFlag(entity.posture.osUpToDate)} />
-          <Field label="Screen lock" value={formatPostureFlag(entity.posture.screenLockEnabled)} />
-        </>
-      );
     case "apiUsageDashboard":
     case "securityAlertsGroup":
-      // Handled by a dedicated panel in DetailPanel above — never reaches here.
+    case "deviceGroup":
+    case "device":
       return null;
   }
 }

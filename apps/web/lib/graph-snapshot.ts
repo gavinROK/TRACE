@@ -53,6 +53,8 @@ export interface GraphSnapshot {
     enrollmentType: string;
     ownerId: string | null;
     ownerName: string | null;
+    departmentId: string | null;
+    departmentName: string | null;
     posture: {
       diskEncrypted: boolean | null;
       firewallEnabled: boolean | null;
@@ -60,5 +62,14 @@ export interface GraphSnapshot {
       screenLockEnabled: boolean | null;
       status: "HEALTHY" | "AT_RISK" | "CRITICAL" | "UNKNOWN";
     };
+    lastCheckInAt: string | null;
+    software: Array<{
+      id: string;
+      name: string;
+      version: string | null;
+      publisher: string | null;
+      installedAt: string | null;
+      source: string;
+    }>;
   }>;
 }

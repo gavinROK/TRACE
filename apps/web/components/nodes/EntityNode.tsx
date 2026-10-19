@@ -156,9 +156,10 @@ function NodeSubtitle({ entity }: { entity: OrgEntity }) {
     return <div className="truncate text-xs text-slate-400">{entity.fullName}</div>;
   }
   if (entity.kind === "device") {
+    const assignedTo = entity.ownerName ?? entity.departmentName ?? "Unassigned";
     return (
       <div className="truncate text-xs text-slate-400">
-        {entity.operatingSystem} {entity.osVersion} · {entity.ownerName ?? "Unassigned"}
+        {entity.operatingSystem} {entity.osVersion} · {assignedTo}
       </div>
     );
   }

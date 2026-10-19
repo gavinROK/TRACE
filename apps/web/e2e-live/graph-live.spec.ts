@@ -187,7 +187,7 @@ test("opens a device's detail panel and shows its real posture fields", async ({
     .first();
   await priyaDevice.click();
 
-  const panel = page.getByTestId("detail-panel");
+  const panel = page.getByTestId("device-profile-panel");
   await expect(panel).toBeVisible();
   await expect(panel).toContainText("Priya Sharma"); // owner
   await expect(panel).toContainText("macOS 14.6");
@@ -201,6 +201,68 @@ test("opens a device's detail panel and shows its real posture fields", async ({
   await expect(panel).not.toBeAttached();
 });
 
+test("shows a device's installed software and department assignment on its profile", async ({
+  page,
+}) => {
+  // Ada Chen's laptop is seeded with two software rows (apps/api/prisma/seed.ts).
+  const adaDevice = page
+    .locator('[data-testid^="node-"]')
+    .filter({ hasText: "Ada Chen's MacBook Pro" })
+    .first();
+  await adaDevice.click();
+
+  const panel = page.getByTestId("device-profile-panel");
+  await expect(panel).toBeVisible();
+  await expect(panel).toContainText("Installed software (2)");
+  await expect(panel).toContainText("Visual Studio Code");
+  await expect(panel).toContainText("Docker Desktop");
+
+  await panel.getByRole("button", { name: "Close" }).click();
+
+  // core-switch-01 is departmentId-assigned (Operations), not owned by a
+  // person — the profile should show the department, not "Unassigned".
+  const switchDevice = page
+    .locator('[data-testid^="node-"]')
+    .filter({ hasText: "core-switch-01" })
+    .first();
+  await switchDevice.click();
+  const switchPanel = page.getByTestId("device-profile-panel");
+  await expect(switchPanel).toBeVisible();
+  await expect(switchPanel).toContainText("Operations");
+  await expect(switchPanel).toContainText("Cisco IOS Firmware");
+  await switchPanel.getByRole("button", { name: "Close" }).click();
+});
+
+test("opens the device inventory panel and searches/filters the seeded fleet", async ({ page }) => {
+  await page.getByTestId("node-device-group").click();
+
+  const panel = page.getByTestId("device-inventory-panel");
+  await expect(panel).toBeVisible();
+
+  // Every seeded device should be listed.
+  await expect(panel.getByTestId("device-inventory-row-device-priya-laptop")).toBeVisible();
+  await expect(panel.getByTestId("device-inventory-row-device-core-switch")).toBeVisible();
+
+  // Search narrows the list to just the matching device.
+  await panel.getByTestId("device-inventory-search").fill("Priya");
+  await expect(panel.getByTestId("device-inventory-row-device-priya-laptop")).toBeVisible();
+  await expect(panel.getByTestId("device-inventory-row-device-core-switch")).not.toBeVisible();
+  await panel.getByTestId("device-inventory-search").fill("");
+
+  // Filtering by posture status narrows to only CRITICAL devices, which
+  // includes Priya's laptop (seeded with two failing posture checks).
+  await panel.getByLabel("Filter by security posture").selectOption("CRITICAL");
+  await expect(panel.getByTestId("device-inventory-row-device-priya-laptop")).toBeVisible();
+  await panel.getByLabel("Filter by security posture").selectOption("ALL");
+
+  // Clicking a row opens that device's profile panel.
+  await panel.getByTestId("device-inventory-row-device-priya-laptop").click();
+  const profile = page.getByTestId("device-profile-panel");
+  await expect(profile).toBeVisible();
+  await expect(profile).toContainText("Priya Sharma's MacBook Air");
+  await profile.getByRole("button", { name: "Close" }).click();
+});
+
 test("the device posture rule's findings appear as real security alerts", async ({ page }) => {
   // Re-running detection is itself idempotent (dedup), so this is safe
   // to call unconditionally rather than depending on prior test ordering.
@@ -212,9 +274,41 @@ test("the device posture rule's findings appear as real security alerts", async 
   const panel = page.getByTestId("security-alerts-panel");
   await panel.getByRole("button", { name: "All", exact: true }).click();
 
+  // Priya's device also triggers DeviceDataQualityRule's stale-checkin
+  // finding (seeded 200 days ago) — filter by alert type too, not just
+  // the device name, so this doesn't depend on which one `.first()` picks.
   const deviceAlert = panel
     .locator('[data-testid^="security-alert-"]')
-    .filter({ hasText: "Priya Sharma's MacBook Air" });
+    .filter({ hasText: "Priya Sharma's MacBook Air" })
+    .filter({ hasText: "Device Posture Risk" });
   await expect(deviceAlert.first()).toBeVisible({ timeout: 10_000 });
   await expect(deviceAlert.first()).toContainText("Device Posture Risk");
+});
+
+test("the device data-quality rule's findings (missing info, stale check-in) appear as real security alerts", async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    await fetch("/api/trace/security/alerts/run", { method: "POST" });
+  });
+
+  await page.getByTestId("node-security-alerts-group").click();
+  const panel = page.getByTestId("security-alerts-panel");
+  await panel.getByRole("button", { name: "All", exact: true }).click();
+
+  // Devon Lee's ThinkPad is seeded with every posture flag null and no
+  // check-in — exactly the "unknown, not confirmed-risky" case this rule
+  // exists to surface, distinct from Priya's confirmed CRITICAL posture.
+  const missingInfoAlert = panel
+    .locator('[data-testid^="security-alert-"]')
+    .filter({ hasText: "Devon Lee's ThinkPad" });
+  await expect(missingInfoAlert.first()).toBeVisible({ timeout: 10_000 });
+  await expect(missingInfoAlert.first()).toContainText("Device Missing Security Info");
+
+  // Priya's laptop is seeded with a check-in 200 days ago — stale.
+  const staleCheckinAlert = panel
+    .locator('[data-testid^="security-alert-"]')
+    .filter({ hasText: "Priya Sharma's MacBook Air" })
+    .filter({ hasText: "Device Stale Checkin" });
+  await expect(staleCheckinAlert.first()).toBeVisible({ timeout: 10_000 });
 });

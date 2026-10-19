@@ -109,6 +109,15 @@ export interface DeviceGroupEntity extends BaseEntity {
   description: string;
 }
 
+export interface DeviceSoftwareEntry {
+  id: string;
+  name: string;
+  version: string | null;
+  publisher: string | null;
+  installedAt: string | null;
+  source: string;
+}
+
 export interface DeviceEntity extends BaseEntity {
   kind: "device";
   deviceType: string;
@@ -117,6 +126,10 @@ export interface DeviceEntity extends BaseEntity {
   serialNumber: string | null;
   enrollmentType: string;
   ownerName: string | null;
+  /** Infrastructure (a switch, a VM, ...) is often assigned to a team
+   * rather than a person — independent of ownerName; a device may have
+   * either, both, or neither. */
+  departmentName: string | null;
   posture: {
     diskEncrypted: boolean | null;
     firewallEnabled: boolean | null;
@@ -124,6 +137,8 @@ export interface DeviceEntity extends BaseEntity {
     screenLockEnabled: boolean | null;
     status: DevicePostureStatus;
   };
+  lastCheckInAt: string | null;
+  software: DeviceSoftwareEntry[];
 }
 
 export type OrgEntity =
