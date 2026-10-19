@@ -133,10 +133,14 @@ describe("GraphService", () => {
         enrollmentType: "SIMULATED",
         ownerId: "dev_1",
         owner: { id: "dev_1", name: "Ada Chen" },
+        departmentId: null,
+        department: null,
         diskEncrypted: false,
         firewallEnabled: true,
         osUpToDate: true,
         screenLockEnabled: true,
+        lastCheckInAt: null,
+        software: [],
       },
       {
         id: "device_2",
@@ -148,10 +152,14 @@ describe("GraphService", () => {
         enrollmentType: "SIMULATED",
         ownerId: null,
         owner: null,
+        departmentId: null,
+        department: null,
         diskEncrypted: true,
         firewallEnabled: true,
         osUpToDate: true,
         screenLockEnabled: true,
+        lastCheckInAt: null,
+        software: [],
       },
     ]);
 
@@ -170,6 +178,55 @@ describe("GraphService", () => {
         ownerName: null,
         posture: expect.objectContaining({ status: "HEALTHY" }),
       }),
+    ]);
+  });
+
+  it("maps a device's department assignment and installed software onto the snapshot", async () => {
+    const installedAt = new Date("2026-01-01T00:00:00.000Z");
+    prisma.device.findMany.mockResolvedValue([
+      {
+        id: "device_1",
+        name: "core-switch-01",
+        deviceType: "SWITCH",
+        operatingSystem: "Cisco IOS",
+        osVersion: "15.2",
+        serialNumber: null,
+        enrollmentType: "MANUAL",
+        ownerId: null,
+        owner: null,
+        departmentId: "dept_1",
+        department: { id: "dept_1", name: "Operations" },
+        diskEncrypted: null,
+        firewallEnabled: null,
+        osUpToDate: null,
+        screenLockEnabled: null,
+        lastCheckInAt: null,
+        software: [
+          {
+            id: "sw_1",
+            name: "Cisco IOS Firmware",
+            version: "15.2(7)E",
+            publisher: "Cisco Systems",
+            installedAt,
+            source: "MANUAL",
+          },
+        ],
+      },
+    ]);
+
+    const snapshot = await service.getSnapshot("org_1");
+
+    expect(snapshot.devices[0].departmentId).toBe("dept_1");
+    expect(snapshot.devices[0].departmentName).toBe("Operations");
+    expect(snapshot.devices[0].software).toEqual([
+      {
+        id: "sw_1",
+        name: "Cisco IOS Firmware",
+        version: "15.2(7)E",
+        publisher: "Cisco Systems",
+        installedAt: installedAt.toISOString(),
+        source: "MANUAL",
+      },
     ]);
   });
 });

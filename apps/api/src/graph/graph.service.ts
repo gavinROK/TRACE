@@ -61,7 +61,11 @@ export class GraphService {
         }),
         this.prisma.device.findMany({
           where: { organizationId },
-          include: { owner: { select: { id: true, name: true } } },
+          include: {
+            owner: { select: { id: true, name: true } },
+            department: { select: { id: true, name: true } },
+            software: { orderBy: { name: "asc" } },
+          },
           orderBy: { name: "asc" },
         }),
       ]);
@@ -145,6 +149,8 @@ export class GraphService {
         enrollmentType: device.enrollmentType,
         ownerId: device.ownerId,
         ownerName: device.owner?.name ?? null,
+        departmentId: device.departmentId,
+        departmentName: device.department?.name ?? null,
         posture: {
           diskEncrypted: device.diskEncrypted,
           firewallEnabled: device.firewallEnabled,
@@ -152,6 +158,15 @@ export class GraphService {
           screenLockEnabled: device.screenLockEnabled,
           status: computePostureStatus(device),
         },
+        lastCheckInAt: device.lastCheckInAt?.toISOString() ?? null,
+        software: device.software.map((item) => ({
+          id: item.id,
+          name: item.name,
+          version: item.version,
+          publisher: item.publisher,
+          installedAt: item.installedAt?.toISOString() ?? null,
+          source: item.source,
+        })),
       })),
     };
   }
