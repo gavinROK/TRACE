@@ -75,11 +75,17 @@ function Field({ label, value }: { label: string; value: string | number }) {
   );
 }
 
+function formatPostureFlag(value: boolean | null): string {
+  if (value === null) return "Unknown";
+  return value ? "Yes" : "No";
+}
+
 function EntityFields({ entity }: { entity: OrgEntity }) {
   switch (entity.kind) {
     case "organization":
     case "department":
     case "repositoryGroup":
+    case "deviceGroup":
       return <p className="text-slate-400">{entity.description}</p>;
     case "developer":
       return (
@@ -120,6 +126,23 @@ function EntityFields({ entity }: { entity: OrgEntity }) {
           <Field label="Default branch" value={entity.defaultBranch} />
           <Field label="Commits" value={entity.commitCount} />
           <Field label="Open pull requests" value={entity.openPullRequestCount} />
+        </>
+      );
+    case "device":
+      return (
+        <>
+          <Field label="Owner" value={entity.ownerName ?? "Unassigned"} />
+          <Field label="Type" value={entity.deviceType} />
+          <Field label="Operating system" value={`${entity.operatingSystem} ${entity.osVersion}`} />
+          <Field label="Serial number" value={entity.serialNumber ?? "—"} />
+          <Field label="Enrollment" value={entity.enrollmentType} />
+          <div className="pt-1 text-xs uppercase tracking-wide text-slate-500">
+            Security posture — {entity.posture.status.replace("_", " ")}
+          </div>
+          <Field label="Disk encryption" value={formatPostureFlag(entity.posture.diskEncrypted)} />
+          <Field label="Firewall" value={formatPostureFlag(entity.posture.firewallEnabled)} />
+          <Field label="OS up to date" value={formatPostureFlag(entity.posture.osUpToDate)} />
+          <Field label="Screen lock" value={formatPostureFlag(entity.posture.screenLockEnabled)} />
         </>
       );
     case "apiUsageDashboard":

@@ -1,11 +1,12 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { ActivityLevel, OrgEntity } from "@/lib/types";
+import type { ActivityLevel, DevicePostureStatus, OrgEntity } from "@/lib/types";
 import {
   ApiUsageIcon,
   ChevronIcon,
   DepartmentIcon,
+  DeviceIcon,
   GithubIcon,
   OrganizationIcon,
   SecurityIcon,
@@ -35,6 +36,13 @@ const SEVERITY_TEXT: Record<ActivityLevel, string> = {
   low: "text-slate-400",
 };
 
+const POSTURE_TEXT: Record<DevicePostureStatus, string> = {
+  HEALTHY: "text-emerald-400",
+  AT_RISK: "text-amber-400",
+  CRITICAL: "text-rose-400",
+  UNKNOWN: "text-slate-500",
+};
+
 export function EntityNode({ data }: NodeProps<EntityNode>) {
   const { entity, canExpand, isCollapsed, isSelected, onToggleCollapse, onSelect } = data;
 
@@ -44,7 +52,8 @@ export function EntityNode({ data }: NodeProps<EntityNode>) {
     entity.kind === "security" ||
     entity.kind === "repository" ||
     entity.kind === "apiUsageDashboard" ||
-    entity.kind === "securityAlertsGroup";
+    entity.kind === "securityAlertsGroup" ||
+    entity.kind === "device";
 
   return (
     <div
@@ -119,6 +128,10 @@ function NodeIcon({ entity }: { entity: OrgEntity }) {
       return <ApiUsageIcon className={className} />;
     case "securityAlertsGroup":
       return <SecurityIcon className={className} />;
+    case "deviceGroup":
+      return <DepartmentIcon className={className} />;
+    case "device":
+      return <DeviceIcon className={className} />;
   }
 }
 
@@ -131,11 +144,23 @@ function NodeSubtitle({ entity }: { entity: OrgEntity }) {
       </div>
     );
   }
-  if (entity.kind === "organization" || entity.kind === "department" || entity.kind === "repositoryGroup") {
+  if (
+    entity.kind === "organization" ||
+    entity.kind === "department" ||
+    entity.kind === "repositoryGroup" ||
+    entity.kind === "deviceGroup"
+  ) {
     return <div className="truncate text-xs text-slate-400">{entity.description}</div>;
   }
   if (entity.kind === "repository") {
     return <div className="truncate text-xs text-slate-400">{entity.fullName}</div>;
+  }
+  if (entity.kind === "device") {
+    return (
+      <div className="truncate text-xs text-slate-400">
+        {entity.operatingSystem} {entity.osVersion} · {entity.ownerName ?? "Unassigned"}
+      </div>
+    );
   }
   return null;
 }
@@ -189,6 +214,12 @@ function NodeMetrics({ entity }: { entity: OrgEntity }) {
           className={`mt-2 text-xs font-medium ${entity.openCount > 0 ? "text-rose-400" : "text-slate-400"}`}
         >
           {entity.openCount} open alert{entity.openCount === 1 ? "" : "s"}
+        </div>
+      );
+    case "device":
+      return (
+        <div className={`mt-2 text-xs font-medium ${POSTURE_TEXT[entity.posture.status]}`}>
+          {entity.posture.status === "UNKNOWN" ? "Posture unknown" : entity.posture.status.replace("_", " ")}
         </div>
       );
     default:

@@ -50,6 +50,15 @@ export function SecurityIcon({ className }: IconProps) {
   );
 }
 
+export function DeviceIcon({ className }: IconProps) {
+  return (
+    <svg viewBox="0 0 24 24" className={className} strokeWidth={1.75}>
+      <rect x="3" y="4" width="18" height="12" className={base} rx="1" />
+      <path d="M2 20h20M9 20l1-4h4l1 4" className={base} />
+    </svg>
+  );
+}
+
 export function ChevronIcon({ className }: IconProps) {
   return (
     <svg viewBox="0 0 24 24" className={className} strokeWidth={2}>

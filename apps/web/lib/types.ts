@@ -13,9 +13,14 @@ export type NodeKind =
   | "repositoryGroup"
   | "repository"
   | "apiUsageDashboard"
-  | "securityAlertsGroup";
+  | "securityAlertsGroup"
+  | "deviceGroup"
+  | "device";
 
 export type ActivityLevel = "high" | "medium" | "low";
+
+/** Mirrors apps/api/src/devices/device-posture.ts's DevicePostureStatus. */
+export type DevicePostureStatus = "HEALTHY" | "AT_RISK" | "CRITICAL" | "UNKNOWN";
 
 interface BaseEntity {
   id: string;
@@ -94,6 +99,33 @@ export interface SecurityAlertsGroupEntity extends BaseEntity {
   openCount: number;
 }
 
+/** Groups device nodes under the organization. Ownership is shown as a
+ * field (`ownerName`), not as graph nesting under the owning developer —
+ * same reasoning as Repository: the graph's entities form a single-parent
+ * tree, so a device can't structurally live under both its owner and a
+ * flat "Devices" branch without a larger rewrite. Only in live mode. */
+export interface DeviceGroupEntity extends BaseEntity {
+  kind: "deviceGroup";
+  description: string;
+}
+
+export interface DeviceEntity extends BaseEntity {
+  kind: "device";
+  deviceType: string;
+  operatingSystem: string;
+  osVersion: string;
+  serialNumber: string | null;
+  enrollmentType: string;
+  ownerName: string | null;
+  posture: {
+    diskEncrypted: boolean | null;
+    firewallEnabled: boolean | null;
+    osUpToDate: boolean | null;
+    screenLockEnabled: boolean | null;
+    status: DevicePostureStatus;
+  };
+}
+
 export type OrgEntity =
   | OrganizationEntity
   | DepartmentEntity
@@ -104,7 +136,9 @@ export type OrgEntity =
   | RepositoryGroupEntity
   | RepositoryEntity
   | ApiUsageDashboardEntity
-  | SecurityAlertsGroupEntity;
+  | SecurityAlertsGroupEntity
+  | DeviceGroupEntity
+  | DeviceEntity;
 
 /** The three per-developer metric leaf kinds (toggled by the filter bar). */
 export const METRIC_KINDS: NodeKind[] = ["github", "apiUsage", "security"];

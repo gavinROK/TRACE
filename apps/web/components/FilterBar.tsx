@@ -24,6 +24,8 @@ interface FilterBarProps {
   onExportJsonCanvas: () => void;
   /** Omitted entirely in demo mode — there's no backend to connect to. */
   onConnectGithub?: () => void;
+  /** Omitted entirely in demo mode — there's no backend to enroll into. */
+  onEnrollDevice?: () => void;
 }
 
 export function FilterBar({
@@ -35,6 +37,7 @@ export function FilterBar({
   onCollapseAll,
   onExportJsonCanvas,
   onConnectGithub,
+  onEnrollDevice,
 }: FilterBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-4 border-b border-slate-800 bg-slate-950 px-4 py-2.5">
@@ -83,6 +86,15 @@ export function FilterBar({
             className="rounded-md bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-900 hover:bg-white"
           >
             Connect GitHub
+          </button>
+        )}
+        {onEnrollDevice && (
+          <button
+            type="button"
+            onClick={onEnrollDevice}
+            className="rounded-md bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-900 hover:bg-white"
+          >
+            Enroll Device
           </button>
         )}
         <button

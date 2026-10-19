@@ -4,6 +4,7 @@ import type { ActivityLevel, OrgEntity } from "./types";
 const REPOSITORY_GROUP_ID = "repository-group";
 const API_USAGE_DASHBOARD_ID = "api-usage-dashboard";
 const SECURITY_ALERTS_GROUP_ID = "security-alerts-group";
+const DEVICE_GROUP_ID = "device-group";
 
 function initialsOf(name: string): string {
   const words = name.trim().split(/\s+/);
@@ -124,6 +125,29 @@ export function mapSnapshotToEntities(snapshot: GraphSnapshot): OrgEntity[] {
     parentId: orgId,
     openCount: snapshot.securityAlertsNodeSummary.openCount,
   });
+
+  entities.push({
+    id: DEVICE_GROUP_ID,
+    kind: "deviceGroup",
+    label: "Devices",
+    parentId: orgId,
+    description: `${snapshot.devices.length} enrolled devices`,
+  });
+  for (const device of snapshot.devices) {
+    entities.push({
+      id: device.id,
+      kind: "device",
+      label: device.name,
+      parentId: DEVICE_GROUP_ID,
+      deviceType: device.deviceType,
+      operatingSystem: device.operatingSystem,
+      osVersion: device.osVersion,
+      serialNumber: device.serialNumber,
+      enrollmentType: device.enrollmentType,
+      ownerName: device.ownerName,
+      posture: device.posture,
+    });
+  }
 
   return entities;
 }

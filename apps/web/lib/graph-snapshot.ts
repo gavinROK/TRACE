@@ -43,4 +43,22 @@ export interface GraphSnapshot {
   securityAlertsNodeSummary: {
     openCount: number;
   };
+  devices: Array<{
+    id: string;
+    name: string;
+    deviceType: string;
+    operatingSystem: string;
+    osVersion: string;
+    serialNumber: string | null;
+    enrollmentType: string;
+    ownerId: string | null;
+    ownerName: string | null;
+    posture: {
+      diskEncrypted: boolean | null;
+      firewallEnabled: boolean | null;
+      osUpToDate: boolean | null;
+      screenLockEnabled: boolean | null;
+      status: "HEALTHY" | "AT_RISK" | "CRITICAL" | "UNKNOWN";
+    };
+  }>;
 }

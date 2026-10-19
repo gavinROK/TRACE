@@ -88,6 +88,26 @@ depend on. Nothing in `apps/web` is being changed — this is additive.
       (live mode only) opens a modal, connects an installation, triggers
       a sync, and refetches the graph, all from the graph itself.
 
+## Phase 2 — IT management & device inventory (new product direction)
+
+TRACE is expanding from a developer/GitHub-focused tool into a unified IT
+management and cybersecurity platform for IT administrators at small/
+medium orgs. Preserving everything above; this phase is additive.
+
+- [x] **Device inventory** — `Device` model (ownership, OS info, four
+      nullable security posture flags), manual enrollment
+      (`POST /devices`), simulated seed data (8 devices across the
+      existing developers plus one unowned shared server, deliberately
+      spanning every posture state), integrated into the graph (a
+      `Devices` branch off the organization, each device showing its
+      owner/posture) and into security detection (`DevicePostureRule` —
+      see log below for all of it, verified live end-to-end).
+- [ ] **Not yet started** (explicitly out of scope for this phase, per
+      plan): software inventory, infrastructure assets beyond devices,
+      and endpoint agents. `DeviceEnrollmentType` already reserves an
+      `AGENT` value so that feature won't need its own migration later,
+      but nothing writes it yet — see "Known limitations."
+
 This list is updated as each item lands; see the detailed log below for
 what's actually been verified so far.
 
@@ -538,6 +558,103 @@ been silently skipping.
 actually running this script, which needs the live database that's still
 blocked — see below.
 
+### Device inventory: backend, posture-based security rule, graph integration, UI
+
+**Data model:** `Device` (apps/api/prisma/schema.prisma) — ownership is a
+plain nullable FK to `Developer` (shared/unowned devices, like
+`prod-db-01` below, are a normal case, not an edge case), four posture
+flags (`diskEncrypted`, `firewallEnabled`, `osUpToDate`, `screenLockEnabled`)
+that are **nullable, not defaulted to false** — a device with no agent has
+genuinely *unknown* posture, a different fact than "verified disabled,"
+and only an explicit `false` ever counts as a finding anywhere downstream.
+`DeviceEnrollmentType` already includes `AGENT` (reserved, unused) so the
+planned-for-later endpoint-agent feature won't need its own migration
+just to add the value.
+
+**Backend:** `POST /devices` (manual enrollment — the DTO has no
+`enrollmentType` field, so a caller can never claim to be "simulated" or
+"agent" data) validates `ownerId` belongs to the caller's own org.
+`GET /devices` lists all devices with computed posture status.
+`computePostureStatus`/`listFailingChecks` (`devices/device-posture.ts`)
+are plain, Nest-independent functions — reused verbatim by the device
+list endpoint, `GraphService`, and the new `DevicePostureRule`, so all
+three can never disagree about what "at risk" means. Two or more failing
+checks → HIGH alert, exactly one → MEDIUM, unknown → never a finding.
+Seed script now creates 8 simulated devices (`enrollmentType: SIMULATED`)
+spanning every posture state (3 healthy, 3 at-risk, 1 critical, 1 unknown)
+plus the one unowned shared server, so there's always real data to
+demonstrate every state without hand-crafting it per demo.
+
+**Graph integration:** devices ride along in the same `GET /graph/snapshot`
+response as repositories (full profile detail included — no second fetch
+needed to open a device's panel). New entity kinds `deviceGroup`/`device`
+in `lib/types.ts`; ownership is shown as a field (`ownerName`), not as
+graph nesting under the owning developer — same reasoning as Repository:
+the graph's entities are a single-parent tree, so a device can't
+structurally live under both its owner and a flat "Devices" branch
+without a larger rewrite, which this phase deliberately avoided per the
+"avoid unnecessary rewrites" instruction.
+
+**UI:** `EnrollDeviceModal.tsx` (graph-driven, live mode only, mirrors the
+existing GitHub onboarding modal's pattern) — posture checks are
+three-way selects ("Unknown / not checked" / Yes / No), not checkboxes,
+so the UI can't accidentally assert a check passed or failed when nobody
+actually knows. Device nodes show posture status color-coded
+(healthy=emerald, at-risk=amber, critical=rose, unknown=slate); the
+detail panel shows owner, OS, enrollment type, and all four posture
+flags individually.
+
+**A real, reproducible Next.js environment issue found and worked
+around:** Next 16's dev server refuses to start a second instance *for
+the same project*, regardless of port — not a port conflict, a
+project-wide lock. This meant Playwright's own managed dev server
+(`playwright.config.ts`/`playwright.live.config.ts`) could not start
+while the frontend dev server I'd started earlier (for the repository
+owner's own manual testing, at their request) was still running, even on
+a completely different port. Worked around by stopping that server
+before running either Playwright suite and restarting it afterward —
+same pattern already used for the backend throughout this session.
+
+**A real pre-existing test bug found and fixed while adding device
+tests, not caused by them:** "resolving an open alert decrements the
+graph's open-alert count by exactly one" asserted `alertCard).not
+.toBeVisible()` using the *same* `.first()` locator it had captured the
+alert's id from earlier — but Playwright locators are lazy and
+re-evaluate against the current DOM on every check, so once the list
+changed, `.first()` silently started matching a *different* alert. This
+was invisible while there was usually only one open alert at a time; the
+device posture rule's four new alert-producing devices made it
+reproducible. Fixed by scoping the "not visible" assertion to the
+captured id via `page.getByTestId(alertTestId)`, exactly like the
+test's own restoration step already correctly did.
+
+**Verified:**
+- Backend: 81 Jest tests (19 new: posture status across all boundary
+  cases including the "never treat null as a failure" case, enrollment's
+  org-scoping validation, list scoping, the security rule's severity
+  thresholds and owner/unowned attribution, and the graph snapshot's
+  device mapping). Live-verified via `curl` at every step: enrolled a
+  real device with a real owner (got HEALTHY back), confirmed an invalid
+  `ownerId` 400s, seeded all 8 devices and confirmed every posture status
+  computed correctly, ran detection and got exactly the 4 expected
+  `device_posture_risk` alerts with correct severities and owner
+  attribution (including the unowned server correctly having no
+  `developerId`), confirmed devices appear correctly in the live graph
+  snapshot.
+- Frontend: full `lint`/`typecheck`/`test`/`build` clean across all three
+  workspaces. Demo-mode suite 8/8 (devices don't exist in demo mode by
+  design, so this also confirms zero regression there). Live suite 9/9
+  (3 new device tests, plus the one pre-existing bug above fixed).
+  Enrollment's own mutation flow (modal → `POST /devices` → graph
+  refetch) was verified manually via real browser automation twice, with
+  real before/after device-count checks against the live database each
+  time — deliberately **not** given a permanent automated test, because
+  there is no `DELETE /devices/:id` endpoint yet, so an enrollment test
+  would leave a new row in the database on every run with no way to
+  clean up, breaking the idempotency the rest of the live suite
+  maintains. Both manually-created verification devices were deleted
+  from the database afterward.
+
 <!-- New entries go above this line -->
 
 ## Known limitations (be honest about these)
@@ -568,6 +685,15 @@ blocked — see below.
   no rate limiting anywhere, including on the webhook and telemetry
   ingestion endpoints. Both are explicitly fine for local development,
   not for any real deployment.
+- **No device deletion/deprovisioning endpoint.** Devices can be enrolled
+  but not removed via the API — fine for a device *inventory*, not
+  sufficient for real offboarding workflows later.
+- **No real endpoint agent.** `DeviceEnrollmentType.AGENT` is reserved in
+  the schema but nothing implements it — all posture data today is
+  either hand-entered (manual enrollment) or simulated (seed script).
+  Per the explicit plan for this phase, agents are intentionally not
+  being built until the server-side device system (this work) is
+  functioning reliably.
 
 ## Upcoming work (not started)
 
@@ -580,3 +706,12 @@ blocked — see below.
   the workflow — deliberately not done yet, see the log entry above).
 - A scheduler for GitHub sync and security detection (both currently
   manual-trigger-only endpoints — see their controllers' doc comments).
+- **Software inventory** and **infrastructure assets** beyond devices —
+  explicitly named in the Phase 2 product direction, not started.
+- **Endpoint agents** — planned per the product direction, but
+  intentionally not started until the server-side device system (now
+  built) has proven reliable, per explicit instruction.
+- A device deletion/deprovisioning endpoint.
+- Relationships between devices/applications beyond ownership (e.g.
+  "this device runs this software," "this device accesses this
+  repository") — out of scope for this phase's device-inventory start.

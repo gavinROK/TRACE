@@ -24,6 +24,7 @@ import { FilterBar } from "@/components/FilterBar";
 import { DetailPanel } from "@/components/DetailPanel";
 import { BackendStatusBadge } from "@/components/BackendStatusBadge";
 import { ConnectGithubModal } from "@/components/ConnectGithubModal";
+import { EnrollDeviceModal } from "@/components/EnrollDeviceModal";
 
 const nodeTypes = { entity: EntityNode };
 
@@ -52,6 +53,15 @@ function OrgGraphInner() {
   const [positionOverrides, setPositionOverrides] = useState<Map<string, Position>>(new Map());
 
   const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+  const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
+
+  const developerOptions = useMemo(
+    () =>
+      entities
+        .filter((entity): entity is OrgEntity & { kind: "developer" } => entity.kind === "developer")
+        .map((developer) => ({ id: developer.id, name: developer.label })),
+    [entities],
+  );
 
   // Reset per-node UI state only when `mode` itself transitions (demo ->
   // live, on the initial load succeeding or failing) — not on every
@@ -167,12 +177,21 @@ function OrgGraphInner() {
         onCollapseAll={() => setCollapsedIds(initiallyCollapsed)}
         onExportJsonCanvas={() => downloadJsonCanvas(entities, currentPositions)}
         onConnectGithub={mode === "live" ? () => setIsConnectModalOpen(true) : undefined}
+        onEnrollDevice={mode === "live" ? () => setIsEnrollModalOpen(true) : undefined}
       />
 
       {isConnectModalOpen && (
         <ConnectGithubModal
           onClose={() => setIsConnectModalOpen(false)}
           onSynced={refetch}
+        />
+      )}
+
+      {isEnrollModalOpen && (
+        <EnrollDeviceModal
+          developers={developerOptions}
+          onClose={() => setIsEnrollModalOpen(false)}
+          onEnrolled={refetch}
         />
       )}
 
