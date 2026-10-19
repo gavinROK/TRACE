@@ -27,7 +27,13 @@ export function DetailPanel({
     return <ApiUsageDashboardPanel onClose={onClose} />;
   }
   if (entity.kind === "securityAlertsGroup") {
-    return <SecurityAlertsPanel onClose={onClose} onDataChanged={onDataChanged} />;
+    return (
+      <SecurityAlertsPanel
+        onClose={onClose}
+        onDataChanged={onDataChanged}
+        onSelectEntity={onSelectEntity}
+      />
+    );
   }
   if (entity.kind === "device") {
     return (

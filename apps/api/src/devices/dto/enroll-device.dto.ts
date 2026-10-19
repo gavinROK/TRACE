@@ -1,4 +1,4 @@
-import { IsBoolean, IsISO8601, IsIn, IsOptional, IsString, MinLength } from "class-validator";
+import { IsBoolean, IsISO8601, IsIn, IsOptional, IsString, MaxLength, MinLength } from "class-validator";
 
 const DEVICE_TYPES = [
   "LAPTOP",
@@ -20,6 +20,7 @@ const DEVICE_TYPES = [
 export class EnrollDeviceDto {
   @IsString()
   @MinLength(1)
+  @MaxLength(200)
   name!: string;
 
   @IsIn(DEVICE_TYPES)
@@ -27,25 +28,30 @@ export class EnrollDeviceDto {
 
   @IsString()
   @MinLength(1)
+  @MaxLength(100)
   operatingSystem!: string;
 
   @IsString()
   @MinLength(1)
+  @MaxLength(50)
   osVersion!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   serialNumber?: string;
 
   /** Must belong to the caller's own organization — validated in the service. */
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   ownerId?: string;
 
   /** Must belong to the caller's own organization — validated in the service.
    * Independent of `ownerId` — a device may have either, both, or neither. */
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   departmentId?: string;
 
   @IsOptional()

@@ -1,6 +1,6 @@
 # TRACE Development Status
 
-Last updated: 2026-10-18 (autonomous engineering session, branch `feature/backend-foundation`)
+Last updated: 2026-10-19 (autonomous engineering session, branch `feature/backend-foundation`)
 
 This document is the single source of truth for what exists, what's in
 progress, and what's next. Read this first in any new session before making
@@ -139,6 +139,214 @@ what's actually been verified so far.
 
 Entries are appended chronologically, newest first. Each entry says exactly
 what was verified and how.
+
+### Product evaluation: realistic 50-person org, bug fixes, security review
+
+A comprehensive evaluation of TRACE as it stood after the infrastructure/
+software-inventory phase — acting as an IT administrator deciding whether
+to deploy this at a real ~50-person company, rather than adding new
+features. Four real bugs were found and fixed, four more findings were
+documented without a code change (each explained below), and the backend's
+authN/authZ, telemetry ingestion, and asset-enrollment endpoints got an
+active security review (not just a read-through).
+
+**Realistic evaluation data.** `apps/api/prisma/seed.ts` was extended
+(not replaced — every existing id/name from the prior phase is untouched,
+so no existing test needed to change for this part) with 5 more
+departments (Sales, Marketing, Finance, HR, Customer Support) and 43 more
+staff for a 50-person total, 5 more network/server infrastructure assets
+(a second switch, two access points — one deliberately outdated, a
+backup server, a staging VM), one workstation per new employee with a
+deterministic varied posture/check-in spread (healthy, one failing
+check, two+ failing checks, genuinely unknown, and stale-but-healthy —
+the same four-state distribution the original 11 hand-picked devices
+demonstrated, now at real scale: 59 devices total), and common
+department-appropriate software (Chrome/Slack/Zoom everywhere, plus
+Salesforce/Canva/QuickBooks/BambooHR/Zendesk/CrowdStrike Falcon/VS Code
+per department) — 177 software rows total. Running security detection
+against this data produced 38 new alerts (26 posture-risk, 11
+missing-info, 10 stale-checkin, plus the pre-existing API-usage alerts),
+confirming the rule engine behaves correctly at realistic volume, not
+just the original handful of hand-picked demo cases.
+
+**Bugs found and fixed:**
+
+1. **Security alert dedup didn't recognize "being investigated" as still
+   open.** `SecurityDetectionService.runDetection`'s duplicate check only
+   matched `status: OPEN`. INVESTIGATING is a working status an admin
+   sets while looking into an alert, not a resolution — the underlying
+   condition hasn't gone away. Re-running detection (which happens
+   routinely; there's no scheduler yet, see "Upcoming work") while an
+   alert was INVESTIGATING spawned a fresh duplicate for the same
+   ongoing condition. Fixed by matching `status: { in: [OPEN,
+   INVESTIGATING] }`. Verified live: set a real alert to INVESTIGATING,
+   reran detection, confirmed zero new alerts for that
+   (type, dedupeKey) pair; new unit test added
+   (`security-detection.service.spec.ts`).
+2. **No way to navigate from a security alert to the asset it's about.**
+   This was the core gap found while directly testing the "investigate a
+   security event" workflow the evaluation was asked to exercise: an
+   alert card showed the device's name in its text but had no link —
+   an admin had to manually search the device inventory by name to find
+   it, with no guarantee the name was even unique. Fixed by adding a
+   "View affected device" / "View developer" link to each alert card
+   (`SecurityAlertsPanel.tsx`), reading `evidence.deviceId` (set by both
+   device rules) or `alert.developerId`, and threading the already-built
+   `onSelectEntity` callback (originally added for the device inventory
+   table) through `DetailPanel`'s `securityAlertsGroup` branch. An
+   org/provider-wide alert (api_usage_spike, elevated_api_error_rate —
+   no single asset) correctly shows no link. Verified live and via two
+   new Playwright live tests, including a full
+   alert → device → owner/posture/software walkthrough.
+3. **The graph's camera didn't re-fit when live data replaced demo
+   data.** `useGraphData` starts synchronously with the small demo
+   dataset, then swaps to the real live snapshot once the fetch
+   resolves — but React Flow's `fitView` prop only fits once, on mount.
+   At the original 7-person scale this was never visible (demo and live
+   Acme Corp happened to be similarly sized/centered). At the 50-person
+   scale this evaluation uses, the camera stayed wherever it fit the
+   tiny demo tree, and the much larger live tree rendered with its root
+   and most of its structure panned completely out of view — on first
+   load, before the admin had done anything, the app looked broken: no
+   org node, no obvious way back to center. Fixed with `<ReactFlow
+   key={mode}>`, remounting (and re-running `fitView`) on each
+   checking → live/demo transition — the same mode-transition boundary
+   `OrgGraph.tsx` already treats as "start over" for collapse/selection
+   state. Verified via screenshot before/after and the existing
+   "renders real organization data" live test, which now also serves as
+   a regression test for this (its comment explains why).
+4. **The devices group rendered all of its children by default.** At 59
+   devices, leaving `deviceGroup` expanded by default (its prior
+   behavior) meant the very first view of the graph showed 50 employees
+   AND 59 devices simultaneously — unreadable, and a real scale problem
+   a 7-device demo could never have surfaced. Fixed by collapsing
+   `deviceGroup` by default in `computeInitiallyCollapsed`, same as
+   individual developer metric leaves. Departments stay expanded by
+   default — unchanged, see "Known limitations" for why this wasn't
+   extended further. Three existing live tests that clicked a device
+   node directly were updated to expand the group first.
+
+Also fixed in passing, found while reviewing input validation for the
+security review below: **no DTO anywhere had a `@MaxLength`.**
+`EnrollDeviceDto`, `AddSoftwareDto`/`SoftwareItemDto`,
+`ReportApiUsageDto`, and `ConnectInstallationDto` all had `@IsString()`
+with no upper bound, so the API would accept and store an arbitrarily
+large string for a device name, a software name, an installation id,
+etc. — unbounded request/storage size from an authenticated-but-not-
+necessarily-trusted caller (e.g., a compromised telemetry-reporting
+script holding a shared API key — see the security review below). Added
+reasonable `@MaxLength` values to every such field; verified live that a
+5,000-character device name now correctly 400s.
+
+**Usability findings documented but deliberately not changed** (each is
+a product/design decision bigger than a bug fix, which this evaluation
+was scoped to avoid):
+- Every person — including the 43 new Sales/Marketing/Finance/HR/Support
+  staff with no GitHub account or API usage at all — still gets
+  GitHub/API Usage/Security Events metric sub-nodes showing "0 repos, 0
+  commits, 0 requests/day." Harmless but noisy, and could be misread as
+  meaningful monitoring coverage for staff TRACE isn't actually tracking
+  anything about. Only showing these for developers with a `githubLogin`
+  or any recorded activity is a reasonable follow-up, but changes the
+  graph's information architecture rather than fixing a defect.
+- The "Activity: High/Medium/Low" filter is a commit-count heuristic
+  (`activityFromCommitCount`), applied uniformly to everyone. Every
+  non-engineering employee with zero commits always reads "low," which
+  could be misread as a judgment about their work rather than "this
+  person has no GitHub account" — same underlying cause as the point
+  above.
+- There's no modeled relationship between a device and the network
+  infrastructure it's connected to (e.g., "this laptop is on
+  floor2-switch-01"). An admin can approximate this by filtering the
+  device inventory by department, but there's no direct device↔device
+  edge. This was named in the original product-direction ask
+  ("associated infrastructure"); building it is a real feature (a new
+  relationship/field), not a bug fix.
+- Departments stay expanded by default regardless of size (unlike the
+  devices group, fixed above) — a department with many people is still
+  busy on first load. Collapsing departments by default too would be a
+  more consistent fix, but changes the demo experience's default view
+  and would require rewriting several existing demo-mode tests that
+  specifically assert developer nodes are visible without expanding
+  anything; left as a deliberate follow-up rather than bundled into this
+  evaluation pass.
+
+**Security review — authN, authZ, telemetry ingestion, asset enrollment,
+API endpoints.** Actively tested, not just read:
+- **Org-scoped authorization holds up under direct attack.** Created a
+  real second organization with its own API key and verified live: its
+  key sees an empty graph/device list (not Acme Corp's 50 people/59
+  devices); enrolling a device with a `ownerId` copied from Acme Corp
+  400s ("must belong to the caller's organization"); reporting telemetry
+  with a copied `developerId` 400s the same way; PATCHing an Acme Corp
+  alert's status 404s ("Security alert not found" — doesn't even leak
+  that the alert exists in another org); adding software to an Acme
+  Corp device id 404s. No IDOR found anywhere tested. (Test org and key
+  deleted afterward.)
+- **Mass-assignment is correctly blocked.** `ValidationPipe`'s
+  `forbidNonWhitelisted` rejects an enroll-device request that tries to
+  smuggle `organizationId`/`isAdmin` fields, confirmed live.
+- **Missing/invalid/malformed API keys are correctly rejected** (401 in
+  all three cases, confirmed live): no `Authorization` header, a
+  syntactically-valid-but-unknown key, and a header missing the
+  `Bearer ` scheme.
+- **No `@MaxLength` anywhere** — found and fixed, see above.
+- **CRITICAL finding, no code change (out of scope — this is a feature,
+  not a bug): the frontend web app itself has zero user-level
+  authentication.** `apps/web`'s server-only proxy
+  (`app/api/trace/[...path]/route.ts` / `lib/trace-api.ts`) correctly
+  keeps `TRACE_API_KEY` out of client-side JS — but it does this by
+  injecting the *one* fixed, server-configured key into every request
+  regardless of who's asking, with no login page, session, or credential
+  prompt of its own. Anyone who can reach the Next.js server on the
+  network gets full read/write access to the organization's entire
+  TRACE data (security alerts, device enrollment, GitHub installations,
+  telemetry) with zero gate. The existing "No production authentication
+  system" known limitation previously described only the backend's
+  dev-only API-key mechanism; this specifically calls out that the
+  *frontend* has no access control of its own at all. **This is the
+  single biggest blocker to deploying this anywhere reachable by more
+  than one trusted person on a fully trusted network** — see the
+  evaluation verdict below.
+- **API keys are all-or-nothing** — one `ApiKey` row grants full
+  read/write access to every endpoint (devices, telemetry, security
+  alerts, GitHub installations); there's no scoping (e.g., a
+  telemetry-only write key vs. a full admin key). If any one system
+  holding this shared key is compromised (a CI pipeline, a reporting
+  script on someone's laptop), the blast radius is the entire
+  organization's data. Worth a scopes/permissions system before broader
+  rollout; a real feature, out of scope here.
+- **CORS remains wide open** (`Access-Control-Allow-Origin: *`) and
+  **there is still no rate limiting anywhere** — both reconfirmed true,
+  unchanged from the existing known limitation, not touched.
+- The GitHub webhook's HMAC signature verification against a single
+  global secret works correctly as designed for a single-tenant
+  self-hosted deployment; it doesn't scale to true multi-tenant SaaS
+  without per-installation secrets. Existing architectural note, not a
+  new finding.
+
+**Performance at realistic scale.** `GET /graph/snapshot` against the
+full 50-person/59-device/177-software-row dataset: ~60ms, ~67KB response.
+No performance concern found at this scale.
+
+**Verified:** Backend 101 Jest tests (1 new, for the dedup/INVESTIGATING
+fix). `lint`/`typecheck`/`build` clean on both workspaces. Demo Playwright
+suite 8/8 (one flaky run under parallel workers due to environment
+resource contention — the same pre-existing class of flakiness documented
+in the "Playwright flakiness" log entry below, confirmed not a regression
+by passing cleanly both standalone and in two full clean re-runs at
+`--workers=1`). Live Playwright suite 14/14 (2 new: the full
+alert → device investigation walkthrough, and the "org-wide alert has no
+device link" check; 3 existing tests updated to expand the now-collapsed
+devices group first; the existing org-node-visibility test's comment
+updated to explain it's now also a regression test for the viewport-fit
+bug). Security-isolation testing (second org/key, cross-org IDOR
+attempts, mass-assignment, auth-failure cases) done via direct `curl`/
+Prisma against the live database, all cleaned up afterward.
+
+**Evaluation verdict:** see the top-level summary given to the user
+alongside this update, and "Known limitations" / "Upcoming work" below
+for the complete, current picture.
 
 ### Infrastructure assets, software inventory, and device IT workflows
 
@@ -814,10 +1022,26 @@ test's own restoration step already correctly did.
   path have never run against github.com or a real installation. Treat
   the *pipeline* as verified and the *live GitHub connection* as
   "implemented, needs a real App registration to validate."
-- **No production authentication system.** Org-scoped authorization in the
-  backend currently uses a development-only mechanism (see the relevant
-  module's code/tests for exactly what) until a real auth provider is wired
-  up. Do not deploy this as-is.
+- **No production authentication system — and specifically, the frontend
+  web app has zero user-level access control of its own.** The backend's
+  org-scoped authorization uses a development-only API-key mechanism
+  until a real auth provider is wired up (do not deploy this as-is). The
+  product-evaluation security review (see the log entry above) found
+  this is actually worse on the frontend side than that description
+  alone implies: `apps/web`'s server-only proxy injects one fixed,
+  server-configured API key into every backend request regardless of
+  who's asking, with no login page, session, or credential prompt of its
+  own anywhere in the Next.js app. Anyone who can reach the frontend on
+  the network — not just anyone with the API key — gets full read/write
+  access to the organization's entire TRACE data. This is the single
+  biggest blocker to deploying this anywhere reachable by more than one
+  trusted person on a fully trusted network.
+- **API keys are all-or-nothing.** One `ApiKey` row grants full
+  read/write access to every endpoint — there's no scoping (e.g., a
+  telemetry-only key vs. a full admin key). If any one system holding a
+  shared key is compromised, the blast radius is the entire
+  organization's data. Found during the security review; a real feature
+  (a scopes/permissions system), not started.
 - **Docker Compose Postgres is for local development only.** It is not a
   production database configuration (no backups, no TLS, a throwaway
   password in `.env.example`).
@@ -857,7 +1081,27 @@ test's own restoration step already correctly did.
   can't structurally nest under both its owner and a flat "Devices"
   branch without a larger rewrite. There are no edges yet for
   device↔software (beyond the profile panel's list),
-  device↔application, or device↔repository.
+  device↔application, device↔repository, or device↔network-infrastructure
+  (e.g. "this laptop is on floor2-switch-01" isn't modeled at all).
+- **Every employee gets GitHub/API Usage/Security Events graph nodes,
+  even non-engineering staff with no GitHub account or API usage at
+  all.** Found during the product evaluation once the seeded org grew to
+  a realistic 50-person/8-department mix: Sales, HR, Marketing, Finance,
+  and Support staff all show "0 repos, 0 commits, 0 requests/day"
+  sub-nodes that are harmless but noisy, and the commit-count-based
+  "Activity: High/Medium/Low" filter always reads "low" for all of them
+  — which could be misread as a judgment about their work rather than
+  "this person has no GitHub account." Deliberately not changed in the
+  evaluation pass (a data/information-architecture decision, not a bug);
+  see the log entry above for the full reasoning.
+- **Departments are not collapsed by default, unlike the devices group.**
+  A department with many people is still busy on first load. Collapsing
+  departments by default too would be more consistent, but changes the
+  demo experience's default view and would require rewriting several
+  existing demo-mode Playwright tests that specifically assert developer
+  nodes are visible without expanding anything — left as a deliberate
+  follow-up, not bundled into the evaluation pass that fixed the devices
+  group.
 
 ## Upcoming work (not started)
 
@@ -880,3 +1124,20 @@ test's own restoration step already correctly did.
   explicitly named in the product direction as a future step.
 - A real RFC 4180 CSV parser (quoted fields, embedded commas) if CSV
   import sees real-world use beyond the current simple format.
+- **Real frontend authentication** (a login page, sessions) — the
+  product evaluation's top security finding; currently anyone who can
+  reach the Next.js server has full access with no credential prompt.
+- **API key scopes/permissions** — currently one key grants full
+  read/write access to everything; found during the evaluation's
+  security review.
+- Collapsing departments by default too (not just the devices group) for
+  a more consistently readable graph at any org size — deliberately
+  deferred past the evaluation pass to avoid rewriting the demo-mode
+  tests that assert the current default-expanded behavior.
+- Only showing an employee's GitHub/API Usage/Security Events graph
+  leaves when there's actually something to show (a `githubLogin` or any
+  recorded activity) — found noisy for non-engineering staff during the
+  evaluation; a real information-architecture decision, not bundled in.
+- Device↔infrastructure relationship edges (e.g. which switch/AP a
+  workstation is connected to) — named as a gap in the product
+  evaluation; a real feature, not started.

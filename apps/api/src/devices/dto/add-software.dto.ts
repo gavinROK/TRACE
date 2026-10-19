@@ -7,6 +7,7 @@ import {
   IsISO8601,
   IsOptional,
   IsString,
+  MaxLength,
   MinLength,
   ValidateNested,
 } from "class-validator";
@@ -19,14 +20,17 @@ const MAX_ITEMS_PER_REQUEST = 500;
 export class SoftwareItemDto {
   @IsString()
   @MinLength(1)
+  @MaxLength(200)
   name!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   version?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   publisher?: string;
 
   @IsOptional()

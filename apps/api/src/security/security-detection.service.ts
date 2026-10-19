@@ -15,13 +15,20 @@ export class SecurityDetectionService {
   /**
    * Runs every registered rule for one organization and persists any new
    * findings — skipping a finding if an equivalent alert (same type,
-   * same dedupeKey, same developer-or-org-wide scope, still OPEN) was
-   * already created within the dedupe window, so re-running this
-   * repeatedly doesn't spam duplicate alerts for the same ongoing
-   * condition. dedupeKey (not just type+developerId) is what lets two
-   * genuinely different findings — e.g. two separate devices owned by
+   * same dedupeKey, same developer-or-org-wide scope, still OPEN or
+   * INVESTIGATING) was already created within the dedupe window, so
+   * re-running this repeatedly doesn't spam duplicate alerts for the same
+   * ongoing condition. dedupeKey (not just type+developerId) is what lets
+   * two genuinely different findings — e.g. two separate devices owned by
    * the same person — both get persisted instead of the second looking
    * like a duplicate of the first.
+   *
+   * INVESTIGATING counts as "still open" here on purpose: it's a working
+   * status an admin sets while looking into an alert, not a resolution.
+   * Checking only OPEN would mean the underlying condition (which hasn't
+   * gone away) spawns a fresh duplicate alert every time detection
+   * reruns while someone is actively investigating it — a real bug found
+   * during the product evaluation in docs/DEVELOPMENT_STATUS.md.
    */
   async runDetection(organizationId: string): Promise<SecurityAlert[]> {
     const dedupeSince = new Date();
@@ -39,7 +46,7 @@ export class SecurityDetectionService {
             type: finding.type,
             dedupeKey: finding.dedupeKey ?? null,
             developerId: finding.developerId ?? null,
-            status: AlertStatus.OPEN,
+            status: { in: [AlertStatus.OPEN, AlertStatus.INVESTIGATING] },
             detectedAt: { gte: dedupeSince },
           },
         });

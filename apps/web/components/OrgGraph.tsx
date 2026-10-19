@@ -31,8 +31,18 @@ const nodeTypes = { entity: EntityNode };
 function computeInitiallyCollapsed(entities: OrgEntity[]): Set<string> {
   // Collapse every developer by default so the graph opens on the
   // org/department/developer shape, with GitHub/API/Security metrics
-  // revealed on demand.
-  return new Set(entities.filter((entity) => entity.kind === "developer").map((entity) => entity.id));
+  // revealed on demand. Also collapse the devices group by default —
+  // found during a 50-person-scale product evaluation that a real
+  // inventory can easily have 50+ devices, and dumping every one of
+  // them into view on first load (unlike a handful of departments,
+  // which stay readable even at that scale) made the graph unreadable
+  // before the admin had done anything. Departments stay expanded by
+  // default, matching the existing demo experience.
+  return new Set(
+    entities
+      .filter((entity) => entity.kind === "developer" || entity.kind === "deviceGroup")
+      .map((entity) => entity.id),
+  );
 }
 
 function OrgGraphInner() {
@@ -197,6 +207,16 @@ function OrgGraphInner() {
 
       <div className="relative flex-1">
         <ReactFlow
+          // Remounts on a mode transition (checking -> live/demo) so
+          // `fitView` below runs again against the new data's actual
+          // layout. `fitView` only fits once, on mount — found during a
+          // product evaluation at realistic (50-person) scale: without
+          // this key, the viewport stayed wherever it fit the tiny
+          // synchronous demo tree, then live data swapped in at a much
+          // larger size with the camera never moving, landing the admin
+          // on an arbitrary, disconnected-looking fragment of the org
+          // with no visible root on first load.
+          key={mode}
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}

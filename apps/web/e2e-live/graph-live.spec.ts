@@ -3,8 +3,9 @@ import { expect, test } from "@playwright/test";
 /**
  * Requires a running, seeded backend (see playwright.live.config.ts).
  * Asserts against real database records, not fixed demo-mode ids — the
- * seeded data's shape (Acme Corp, 7 developers, synced mock repos) is
- * documented in apps/api/prisma/seed.ts and docs/DEVELOPMENT_STATUS.md.
+ * seeded data's shape (Acme Corp, 50 employees across 8 departments,
+ * ~60 devices, synced mock repos) is documented in
+ * apps/api/prisma/seed.ts and docs/DEVELOPMENT_STATUS.md.
  */
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
@@ -16,6 +17,16 @@ test.beforeEach(async ({ page }) => {
 test("renders real organization data from the live backend", async ({ page }) => {
   await expect(page.getByTestId("backend-status-badge")).toContainText("Acme Corp");
 
+  // Also a regression test for a real bug found at this org's realistic
+  // (50-person) scale: React Flow's `fitView` prop only fits once, on
+  // mount, against whatever data is present at that instant — the
+  // synchronous demo tree, not the live snapshot that swaps in a moment
+  // later. Without a remount keyed to the mode transition (see
+  // OrgGraph.tsx), the camera stayed wherever it fit the tiny demo tree,
+  // leaving the org root panned out of view entirely once 50 people's
+  // worth of real data rendered. ReactFlow's pane clips panned-out nodes
+  // (overflow: hidden), so toBeVisible() here genuinely fails if that
+  // regresses, not just a cosmetic text-content check.
   const orgNode = page.locator('[data-testid^="node-"]').filter({ hasText: "Acme Corp" });
   await expect(orgNode.first()).toBeVisible();
 });
@@ -167,6 +178,11 @@ test("shows the devices group populated with real seeded devices and posture", a
   await expect(deviceGroup).toBeVisible();
   await expect(deviceGroup).toContainText("Devices");
 
+  // The devices group starts collapsed by default (a real inventory can
+  // easily have 50+ devices — see computeInitiallyCollapsed in
+  // OrgGraph.tsx), so expand it before looking for individual devices.
+  await page.getByTestId("node-toggle-device-group").click();
+
   // Seeded by apps/api/prisma/seed.ts — device names are stable.
   const priyaDevice = page
     .locator('[data-testid^="node-"]')
@@ -181,6 +197,9 @@ test("shows the devices group populated with real seeded devices and posture", a
 });
 
 test("opens a device's detail panel and shows its real posture fields", async ({ page }) => {
+  // Devices start collapsed by default — see computeInitiallyCollapsed.
+  await page.getByTestId("node-toggle-device-group").click();
+
   const priyaDevice = page
     .locator('[data-testid^="node-"]')
     .filter({ hasText: "Priya Sharma's MacBook Air" })
@@ -204,6 +223,9 @@ test("opens a device's detail panel and shows its real posture fields", async ({
 test("shows a device's installed software and department assignment on its profile", async ({
   page,
 }) => {
+  // Devices start collapsed by default — see computeInitiallyCollapsed.
+  await page.getByTestId("node-toggle-device-group").click();
+
   // Ada Chen's laptop is seeded with two software rows (apps/api/prisma/seed.ts).
   const adaDevice = page
     .locator('[data-testid^="node-"]')
@@ -311,4 +333,62 @@ test("the device data-quality rule's findings (missing info, stale check-in) app
     .filter({ hasText: "Priya Sharma's MacBook Air" })
     .filter({ hasText: "Device Stale Checkin" });
   await expect(staleCheckinAlert.first()).toBeVisible({ timeout: 10_000 });
+});
+
+test("an admin can investigate a security event end to end: alert -> affected device -> owner -> software -> evidence", async ({
+  page,
+}) => {
+  // This is the core "investigate a security event" workflow found
+  // missing during the product evaluation (docs/DEVELOPMENT_STATUS.md):
+  // an alert card had no way to jump to the device it was about. Fixed
+  // by adding a "View affected device" link driven by the alert's own
+  // evidence.deviceId.
+  await page.evaluate(async () => {
+    await fetch("/api/trace/security/alerts/run", { method: "POST" });
+  });
+
+  await page.getByTestId("node-security-alerts-group").click();
+  const alertsPanel = page.getByTestId("security-alerts-panel");
+  await alertsPanel.getByRole("button", { name: "All", exact: true }).click();
+
+  const deviceAlert = alertsPanel
+    .locator('[data-testid^="security-alert-"]')
+    .filter({ hasText: "Priya Sharma's MacBook Air" })
+    .filter({ hasText: "Device Posture Risk" })
+    .first();
+  await expect(deviceAlert).toBeVisible({ timeout: 10_000 });
+
+  // The evidence is readable on the card itself before navigating away.
+  await expect(deviceAlert).toContainText("failing");
+
+  await deviceAlert.getByRole("button", { name: "View affected device" }).click();
+
+  // Navigating away from the alerts group replaces it with the device's
+  // own profile panel — owner, posture, and installed software are all
+  // reachable from here without leaving the graph.
+  const devicePanel = page.getByTestId("device-profile-panel");
+  await expect(devicePanel).toBeVisible();
+  await expect(devicePanel).toContainText("Priya Sharma's MacBook Air");
+  await expect(devicePanel).toContainText("Priya Sharma"); // the owner
+  await expect(devicePanel).toContainText("CRITICAL");
+});
+
+test("an org-wide alert (no single device) has no device link, only developer-scoped alerts link out", async ({
+  page,
+}) => {
+  // api_usage_spike and elevated_api_error_rate are org/provider-wide —
+  // there is no single asset to jump to, so this link must not appear
+  // for them (it would be misleading, not just unhelpful).
+  await page.getByTestId("node-security-alerts-group").click();
+  const panel = page.getByTestId("security-alerts-panel");
+  await panel.getByRole("button", { name: "All", exact: true }).click();
+
+  const orgWideAlert = panel
+    .locator('[data-testid^="security-alert-"]')
+    .filter({ hasText: "Api Usage Spike" })
+    .first();
+  const hasOrgWideAlert = await orgWideAlert.isVisible({ timeout: 5_000 }).catch(() => false);
+  test.skip(!hasOrgWideAlert, "No API usage spike alert in the current database state");
+
+  await expect(orgWideAlert.getByRole("button", { name: /View/ })).not.toBeAttached();
 });

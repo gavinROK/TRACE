@@ -11,6 +11,19 @@ import {
 interface SecurityAlertsPanelProps {
   onClose: () => void;
   onDataChanged?: () => void;
+  /** Lets an alert card jump straight to the device or developer it's
+   * about — the "investigate this" link closing the loop between an
+   * alert and the asset/owner/evidence an admin needs to act on it. */
+  onSelectEntity?: (id: string) => void;
+}
+
+/** Device-posture and data-quality rules put the device's id in
+ * `evidence.deviceId` (see apps/api's device security rules) — there's no
+ * dedicated "subjectId" field on the alert record itself, so this reads
+ * the one place it's actually put, defensively (evidence is untyped JSON
+ * from the API). */
+function deviceIdFromEvidence(evidence: Record<string, unknown>): string | null {
+  return typeof evidence.deviceId === "string" ? evidence.deviceId : null;
 }
 
 type LoadState =
@@ -25,7 +38,7 @@ const SEVERITY_CLASS: Record<string, string> = {
   CRITICAL: "text-rose-300",
 };
 
-export function SecurityAlertsPanel({ onClose, onDataChanged }: SecurityAlertsPanelProps) {
+export function SecurityAlertsPanel({ onClose, onDataChanged, onSelectEntity }: SecurityAlertsPanelProps) {
   const [filter, setFilter] = useState<"OPEN" | "ALL">("OPEN");
   const [state, setState] = useState<LoadState>({ status: "loading" });
   const [updatingId, setUpdatingId] = useState<string | null>(null);
@@ -117,46 +130,61 @@ export function SecurityAlertsPanel({ onClose, onDataChanged }: SecurityAlertsPa
           <p className="text-sm text-slate-500">No alerts.</p>
         )}
         {state.status === "ready" &&
-          state.alerts.map((alert) => (
-            <div
-              key={alert.id}
-              data-testid={`security-alert-${alert.id}`}
-              className="rounded-lg border border-slate-800 bg-slate-950/40 p-3"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className={`text-sm font-semibold ${SEVERITY_CLASS[alert.severity]}`}>
-                  {formatAlertType(alert.type)}
-                </span>
-                <span className="text-xs text-slate-500">{alert.severity}</span>
+          state.alerts.map((alert) => {
+            const deviceId = deviceIdFromEvidence(alert.evidence);
+            const targetId = deviceId ?? alert.developerId ?? null;
+
+            return (
+              <div
+                key={alert.id}
+                data-testid={`security-alert-${alert.id}`}
+                className="rounded-lg border border-slate-800 bg-slate-950/40 p-3"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className={`text-sm font-semibold ${SEVERITY_CLASS[alert.severity]}`}>
+                    {formatAlertType(alert.type)}
+                  </span>
+                  <span className="text-xs text-slate-500">{alert.severity}</span>
+                </div>
+                <p className="mt-1.5 text-xs text-slate-400">{alert.reason}</p>
+                {alert.recommendedSteps.length > 0 && (
+                  <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-xs text-slate-500">
+                    {alert.recommendedSteps.map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ul>
+                )}
+                {targetId && onSelectEntity && (
+                  <button
+                    type="button"
+                    data-testid={`security-alert-view-asset-${alert.id}`}
+                    onClick={() => onSelectEntity(targetId)}
+                    className="mt-2 text-xs font-medium text-cyan-400 hover:text-cyan-300 hover:underline"
+                  >
+                    {deviceId ? "View affected device →" : "View developer →"}
+                  </button>
+                )}
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="text-xs text-slate-500">
+                    {new Date(alert.detectedAt).toLocaleString()}
+                  </span>
+                  <select
+                    aria-label={`Update status for ${formatAlertType(alert.type)} alert`}
+                    value={alert.status}
+                    disabled={updatingId === alert.id}
+                    onChange={(event) => updateStatus(alert.id, event.target.value as AlertStatus)}
+                    className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-xs text-slate-200"
+                  >
+                    {ALERT_STATUSES.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <p className="mt-1.5 text-xs text-slate-400">{alert.reason}</p>
-              {alert.recommendedSteps.length > 0 && (
-                <ul className="mt-1.5 list-inside list-disc space-y-0.5 text-xs text-slate-500">
-                  {alert.recommendedSteps.map((step) => (
-                    <li key={step}>{step}</li>
-                  ))}
-                </ul>
-              )}
-              <div className="mt-2 flex items-center justify-between gap-2">
-                <span className="text-xs text-slate-500">
-                  {new Date(alert.detectedAt).toLocaleString()}
-                </span>
-                <select
-                  aria-label={`Update status for ${formatAlertType(alert.type)} alert`}
-                  value={alert.status}
-                  disabled={updatingId === alert.id}
-                  onChange={(event) => updateStatus(alert.id, event.target.value as AlertStatus)}
-                  className="rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-xs text-slate-200"
-                >
-                  {ALERT_STATUSES.map((option) => (
-                    <option key={option} value={option}>
-                      {option}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          ))}
+            );
+          })}
       </div>
     </aside>
   );

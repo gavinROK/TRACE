@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, Min, MinLength } from "class-validator";
+import { IsIn, IsInt, IsISO8601, IsNumber, IsOptional, IsString, MaxLength, Min, MinLength } from "class-validator";
 
 /**
  * Mirrors packages/telemetry-sdk's ApiUsageReport shape — keep both in
@@ -14,14 +14,17 @@ export class ReportApiUsageDto {
 
   @IsString()
   @MinLength(1)
+  @MaxLength(100)
   provider!: string;
 
   @IsString()
   @MinLength(1)
+  @MaxLength(100)
   service!: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   developerId?: string;
 
   @IsOptional()

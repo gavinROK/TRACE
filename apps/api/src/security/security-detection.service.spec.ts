@@ -71,10 +71,29 @@ describe("SecurityDetectionService", () => {
         type: SecurityAlertType.API_USAGE_SPIKE,
         dedupeKey: "device_1",
         developerId: "dev_1",
-        status: AlertStatus.OPEN,
+        status: { in: [AlertStatus.OPEN, AlertStatus.INVESTIGATING] },
         detectedAt: { gte: expect.any(Date) },
       },
     });
+  });
+
+  it("does not create a duplicate while an equivalent alert is INVESTIGATING, not just OPEN", async () => {
+    // Real bug found during the product evaluation: INVESTIGATING is a
+    // working status an admin sets while looking into an alert, not a
+    // resolution — the underlying condition hasn't gone away. Checking
+    // only OPEN meant a rerun during investigation spawned a fresh
+    // duplicate alert for the same still-ongoing condition.
+    const rule = { evaluate: jest.fn().mockResolvedValue([finding()]) };
+    const service = new SecurityDetectionService([rule], prisma as never);
+    prisma.securityAlert.findFirst.mockResolvedValue({
+      id: "existing_alert",
+      status: AlertStatus.INVESTIGATING,
+    });
+
+    const created = await service.runDetection("org_1");
+
+    expect(created).toEqual([]);
+    expect(prisma.securityAlert.create).not.toHaveBeenCalled();
   });
 
   it("does not drop a second finding that shares type+developerId but has a different dedupeKey", async () => {

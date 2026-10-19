@@ -11,9 +11,16 @@ interface BackendStatusBadgeProps {
  * for the graph itself, so this never triggers a second network request.
  */
 export function BackendStatusBadge({ mode, organizationName, developerCount }: BackendStatusBadgeProps) {
+  // "People," not "developers" — a real organization's Developer records
+  // (the underlying model's name, kept for now — see
+  // docs/DEVELOPMENT_STATUS.md) represent every employee TRACE knows
+  // about, including Sales, HR, and Support staff who have no GitHub or
+  // API activity at all. Calling all of them "developers" in a status
+  // message an IT admin reads first was found misleading during the
+  // product evaluation.
   const label =
     mode === "live"
-      ? `Live — connected to ${organizationName} (${developerCount} developers)`
+      ? `Live — connected to ${organizationName} (${developerCount} people)`
       : mode === "demo"
         ? "Demo mode — showing simulated data"
         : "Checking backend…";
