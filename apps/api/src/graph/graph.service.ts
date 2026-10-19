@@ -1,5 +1,6 @@
 import { Injectable } from "@nestjs/common";
 import { ActivityEventType } from "../activity/activity-event-type";
+import { computePostureStatus } from "../devices/device-posture";
 import { PrismaService } from "../prisma/prisma.service";
 import { GraphSnapshot } from "./graph-snapshot";
 
@@ -34,6 +35,7 @@ export class GraphService {
       openAlerts,
       usageByProvider,
       usageByDeveloper,
+      devices,
     ] = await Promise.all([
         this.prisma.organization.findUniqueOrThrow({ where: { id: organizationId } }),
         this.prisma.department.findMany({ where: { organizationId }, orderBy: { name: "asc" } }),
@@ -56,6 +58,11 @@ export class GraphService {
           by: ["developerId"],
           where: { organizationId, developerId: { not: null } },
           _sum: { requestCount: true },
+        }),
+        this.prisma.device.findMany({
+          where: { organizationId },
+          include: { owner: { select: { id: true, name: true } } },
+          orderBy: { name: "asc" },
         }),
       ]);
 
@@ -128,6 +135,24 @@ export class GraphService {
       securityAlertsNodeSummary: {
         openCount: openAlerts.length,
       },
+      devices: devices.map((device) => ({
+        id: device.id,
+        name: device.name,
+        deviceType: device.deviceType,
+        operatingSystem: device.operatingSystem,
+        osVersion: device.osVersion,
+        serialNumber: device.serialNumber,
+        enrollmentType: device.enrollmentType,
+        ownerId: device.ownerId,
+        ownerName: device.owner?.name ?? null,
+        posture: {
+          diskEncrypted: device.diskEncrypted,
+          firewallEnabled: device.firewallEnabled,
+          osUpToDate: device.osUpToDate,
+          screenLockEnabled: device.screenLockEnabled,
+          status: computePostureStatus(device),
+        },
+      })),
     };
   }
 }

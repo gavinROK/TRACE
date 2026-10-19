@@ -47,4 +47,26 @@ export interface GraphSnapshot {
   securityAlertsNodeSummary: {
     openCount: number;
   };
+  /** Full enough per-device detail that the frontend doesn't need a
+   * second fetch to show a device's profile — same precedent as
+   * `repositories`, unlike the telemetry/security dashboards which fetch
+   * their richer detail separately on open. */
+  devices: Array<{
+    id: string;
+    name: string;
+    deviceType: string;
+    operatingSystem: string;
+    osVersion: string;
+    serialNumber: string | null;
+    enrollmentType: string;
+    ownerId: string | null;
+    ownerName: string | null;
+    posture: {
+      diskEncrypted: boolean | null;
+      firewallEnabled: boolean | null;
+      osUpToDate: boolean | null;
+      screenLockEnabled: boolean | null;
+      status: "HEALTHY" | "AT_RISK" | "CRITICAL" | "UNKNOWN";
+    };
+  }>;
 }

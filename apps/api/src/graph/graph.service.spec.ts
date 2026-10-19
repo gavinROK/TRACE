@@ -9,6 +9,7 @@ describe("GraphService", () => {
     activityEvent: { findMany: jest.fn() },
     securityAlert: { findMany: jest.fn() },
     apiUsageEvent: { groupBy: jest.fn() },
+    device: { findMany: jest.fn() },
   };
   const service = new GraphService(prisma as never);
 
@@ -25,6 +26,7 @@ describe("GraphService", () => {
     prisma.activityEvent.findMany.mockResolvedValue([]);
     prisma.securityAlert.findMany.mockResolvedValue([]);
     prisma.apiUsageEvent.groupBy.mockResolvedValue([]);
+    prisma.device.findMany.mockResolvedValue([]);
   });
 
   it("returns basic organization fields", async () => {
@@ -117,5 +119,57 @@ describe("GraphService", () => {
 
     expect(snapshot.apiUsageNodeSummary).toEqual({ requestCount: 15, providerCount: 2 });
     expect(snapshot.securityAlertsNodeSummary).toEqual({ openCount: 2 });
+  });
+
+  it("maps devices with owner name and computed posture status, including unowned devices", async () => {
+    prisma.device.findMany.mockResolvedValue([
+      {
+        id: "device_1",
+        name: "Ada's laptop",
+        deviceType: "LAPTOP",
+        operatingSystem: "macOS",
+        osVersion: "15.1",
+        serialNumber: "SN1",
+        enrollmentType: "SIMULATED",
+        ownerId: "dev_1",
+        owner: { id: "dev_1", name: "Ada Chen" },
+        diskEncrypted: false,
+        firewallEnabled: true,
+        osUpToDate: true,
+        screenLockEnabled: true,
+      },
+      {
+        id: "device_2",
+        name: "prod-db-01",
+        deviceType: "SERVER",
+        operatingSystem: "Ubuntu",
+        osVersion: "22.04",
+        serialNumber: null,
+        enrollmentType: "SIMULATED",
+        ownerId: null,
+        owner: null,
+        diskEncrypted: true,
+        firewallEnabled: true,
+        osUpToDate: true,
+        screenLockEnabled: true,
+      },
+    ]);
+
+    const snapshot = await service.getSnapshot("org_1");
+
+    expect(snapshot.devices).toEqual([
+      expect.objectContaining({
+        id: "device_1",
+        ownerId: "dev_1",
+        ownerName: "Ada Chen",
+        posture: expect.objectContaining({ status: "AT_RISK" }),
+      }),
+      expect.objectContaining({
+        id: "device_2",
+        ownerId: null,
+        ownerName: null,
+        posture: expect.objectContaining({ status: "HEALTHY" }),
+      }),
+    ]);
   });
 });
