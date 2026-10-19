@@ -9,6 +9,7 @@ export const SecurityAlertType = {
   API_USAGE_SPIKE: "api_usage_spike",
   ELEVATED_API_ERROR_RATE: "elevated_api_error_rate",
   UNUSUAL_COMMIT_VOLUME: "unusual_commit_volume",
+  DEVICE_POSTURE_RISK: "device_posture_risk",
 } as const;
 
 export type SecurityAlertType = (typeof SecurityAlertType)[keyof typeof SecurityAlertType];

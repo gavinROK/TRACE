@@ -51,11 +51,160 @@ async function main() {
     { email: "sofia.rossi@acme-corp.example", name: "Sofia Rossi", role: "Security Engineer", departmentId: security.id },
   ];
 
+  const developerByEmail = new Map<string, { id: string }>();
   for (const developer of developers) {
-    await prisma.developer.upsert({
+    const row = await prisma.developer.upsert({
       where: { organizationId_email: { organizationId: organization.id, email: developer.email } },
       create: { ...developer, organizationId: organization.id },
       update: { name: developer.name, role: developer.role, departmentId: developer.departmentId, githubLogin: developer.githubLogin },
+    });
+    developerByEmail.set(developer.email, row);
+  }
+
+  // Simulated device inventory — deliberately varied posture (healthy,
+  // at-risk, critical, and genuinely unknown) so the UI and the
+  // DevicePostureRule security rule both have something real to show.
+  // One device has no owner at all (shared infrastructure), matching how
+  // a real inventory looks.
+  const devices: Array<{
+    id: string;
+    name: string;
+    deviceType: "LAPTOP" | "DESKTOP" | "SERVER";
+    operatingSystem: string;
+    osVersion: string;
+    ownerEmail?: string;
+    diskEncrypted: boolean | null;
+    firewallEnabled: boolean | null;
+    osUpToDate: boolean | null;
+    screenLockEnabled: boolean | null;
+  }> = [
+    {
+      id: "device-ada-laptop",
+      name: "Ada Chen's MacBook Pro",
+      deviceType: "LAPTOP",
+      operatingSystem: "macOS",
+      osVersion: "15.1",
+      ownerEmail: "ada.chen@acme-corp.example",
+      diskEncrypted: true,
+      firewallEnabled: true,
+      osUpToDate: true,
+      screenLockEnabled: true,
+    },
+    {
+      id: "device-marcus-laptop",
+      name: "Marcus Webb's Dell Latitude",
+      deviceType: "LAPTOP",
+      operatingSystem: "Windows",
+      osVersion: "11",
+      ownerEmail: "marcus.webb@acme-corp.example",
+      diskEncrypted: false,
+      firewallEnabled: true,
+      osUpToDate: true,
+      screenLockEnabled: true,
+    },
+    {
+      id: "device-priya-laptop",
+      name: "Priya Sharma's MacBook Air",
+      deviceType: "LAPTOP",
+      operatingSystem: "macOS",
+      osVersion: "14.6",
+      ownerEmail: "priya.sharma@acme-corp.example",
+      diskEncrypted: true,
+      firewallEnabled: true,
+      osUpToDate: false,
+      screenLockEnabled: false,
+    },
+    {
+      id: "device-devon-laptop",
+      name: "Devon Lee's ThinkPad",
+      deviceType: "LAPTOP",
+      operatingSystem: "Ubuntu",
+      osVersion: "22.04",
+      ownerEmail: "devon.lee@acme-corp.example",
+      // Manually enrolled, never checked — genuinely unknown, not a finding.
+      diskEncrypted: null,
+      firewallEnabled: null,
+      osUpToDate: null,
+      screenLockEnabled: null,
+    },
+    {
+      id: "device-isabel-laptop",
+      name: "Isabel Ortiz's MacBook Pro",
+      deviceType: "LAPTOP",
+      operatingSystem: "macOS",
+      osVersion: "15.1",
+      ownerEmail: "isabel.ortiz@acme-corp.example",
+      diskEncrypted: true,
+      firewallEnabled: true,
+      osUpToDate: true,
+      screenLockEnabled: true,
+    },
+    {
+      id: "device-noah-desktop",
+      name: "Noah Kim's Desktop",
+      deviceType: "DESKTOP",
+      operatingSystem: "Windows",
+      osVersion: "10",
+      ownerEmail: "noah.kim@acme-corp.example",
+      diskEncrypted: true,
+      firewallEnabled: true,
+      osUpToDate: false,
+      screenLockEnabled: true,
+    },
+    {
+      id: "device-sofia-laptop",
+      name: "Sofia Rossi's MacBook Pro",
+      deviceType: "LAPTOP",
+      operatingSystem: "macOS",
+      osVersion: "15.1",
+      ownerEmail: "sofia.rossi@acme-corp.example",
+      diskEncrypted: true,
+      firewallEnabled: true,
+      osUpToDate: true,
+      screenLockEnabled: true,
+    },
+    {
+      id: "device-prod-db-server",
+      name: "prod-db-01",
+      deviceType: "SERVER",
+      operatingSystem: "Ubuntu",
+      osVersion: "22.04",
+      // No owner — shared infrastructure, not any one person's device.
+      diskEncrypted: true,
+      firewallEnabled: false,
+      osUpToDate: true,
+      screenLockEnabled: null,
+    },
+  ];
+
+  for (const device of devices) {
+    const owner = device.ownerEmail ? developerByEmail.get(device.ownerEmail) : undefined;
+    await prisma.device.upsert({
+      where: { id: device.id },
+      create: {
+        id: device.id,
+        organizationId: organization.id,
+        ownerId: owner?.id,
+        name: device.name,
+        deviceType: device.deviceType,
+        operatingSystem: device.operatingSystem,
+        osVersion: device.osVersion,
+        enrollmentType: "SIMULATED",
+        diskEncrypted: device.diskEncrypted,
+        firewallEnabled: device.firewallEnabled,
+        osUpToDate: device.osUpToDate,
+        screenLockEnabled: device.screenLockEnabled,
+      },
+      update: {
+        ownerId: owner?.id,
+        name: device.name,
+        operatingSystem: device.operatingSystem,
+        osVersion: device.osVersion,
+        diskEncrypted: device.diskEncrypted,
+        firewallEnabled: device.firewallEnabled,
+        osUpToDate: device.osUpToDate,
+        screenLockEnabled: device.screenLockEnabled,
+      },
     });
   }
 
