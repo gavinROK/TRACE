@@ -30,6 +30,7 @@ model Organization {
   apiUsageEvents ApiUsageEvent[]
   securityAlerts SecurityAlert[]
   devices        Device[]
+  softwareInstallations SoftwareInstallation[]
 
   @@map("organizations")
 }
@@ -58,6 +59,7 @@ model Department {
   createdAt      DateTime     @default(now())
 
   developers Developer[]
+  assignedDevices Device[]
 
   @@map("departments")
 }
@@ -212,6 +214,15 @@ model SecurityAlert {
   developer         Developer?    @relation(fields: [developerId], references: [id])
   developerId       String?
   type              String
+  /// Identifies the specific subject a finding is about (a device id, a
+  /// provider name, ...) — set by the rule that produced it. Without
+  /// this, dedup could only key on (type, developerId), which silently
+  /// collapsed genuinely distinct findings whenever a rule could produce
+  /// more than one for the same type/developer (e.g. two devices owned
+  /// by the same person, both flagged by DevicePostureRule, would
+  /// otherwise look like duplicates of each other). Null is valid for a
+  /// rule with no natural per-run duplicate subject.
+  dedupeKey         String?
   severity          AlertSeverity
   status            AlertStatus   @default(OPEN)
   detectedAt        DateTime      @default(now())
@@ -221,6 +232,7 @@ model SecurityAlert {
   createdAt         DateTime      @default(now())
 
   @@index([organizationId, status])
+  @@index([organizationId, type, dedupeKey, status])
   @@map("security_alerts")
 }
 
@@ -229,6 +241,15 @@ enum DeviceType {
   DESKTOP
   MOBILE
   SERVER
+  // Network infrastructure — not user-owned, usually assigned to a
+  // department rather than a person. Deliberately kept as more values on
+  // the same Device/DeviceType model rather than a parallel "Asset"
+  // entity: ownership, posture, and graph placement all already work the
+  // same way for a laptop as for a switch.
+  SWITCH
+  ROUTER
+  ACCESS_POINT
+  VIRTUAL_MACHINE
   OTHER
 }
 
@@ -259,6 +280,11 @@ model Device {
   organizationId     String
   owner              Developer?           @relation(fields: [ownerId], references: [id])
   ownerId            String?
+  /// For infrastructure that belongs to a team rather than a person (a
+  /// switch, a shared VM) — independent of `owner`; a device may have
+  /// either, both, or neither.
+  department         Department?          @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  departmentId       String?
   name               String
   deviceType         DeviceType
   operatingSystem    String
@@ -269,10 +295,44 @@ model Device {
   firewallEnabled    Boolean?
   osUpToDate         Boolean?
   screenLockEnabled  Boolean?
+  /// Self-reported, not agent-collected (no agent exists yet) — e.g. an
+  /// IT admin recording "I physically checked this device on this date."
+  /// Null means no check-in has ever been recorded, which is a *missing
+  /// information* fact, not evidence the device is stale — see
+  /// DeviceDataQualityRule.
   lastCheckInAt      DateTime?
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
 
+  software           SoftwareInstallation[]
+
   @@index([organizationId])
   @@map("devices")
+}
+
+enum SoftwareInventorySource {
+  MANUAL
+  CSV_IMPORT
+}
+
+/// One application installed on one device. Deliberately denormalized
+/// (name/version/publisher stored directly, no separate "Application"
+/// catalog) — a catalog entity would be premature for a first version
+/// with no data yet to justify it.
+model SoftwareInstallation {
+  id             String                  @id @default(cuid())
+  organization   Organization            @relation(fields: [organizationId], references: [id])
+  organizationId String
+  device         Device                  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId       String
+  name           String
+  version        String?
+  publisher      String?
+  installedAt    DateTime?
+  source         SoftwareInventorySource @default(MANUAL)
+  createdAt      DateTime                @default(now())
+
+  @@index([organizationId])
+  @@index([deviceId])
+  @@map("software_installations")
 }

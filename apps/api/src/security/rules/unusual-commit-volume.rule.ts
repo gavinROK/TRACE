@@ -71,6 +71,7 @@ export class UnusualCommitVolumeRule implements SecurityRule {
 
       findings.push({
         type: SecurityAlertType.UNUSUAL_COMMIT_VOLUME,
+        dedupeKey: developerId,
         severity,
         developerId,
         reason:

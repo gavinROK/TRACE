@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module";
 import { ApiUsageSpikeRule } from "./rules/api-usage-spike.rule";
+import { DeviceDataQualityRule } from "./rules/device-data-quality.rule";
 import { DevicePostureRule } from "./rules/device-posture.rule";
 import { ElevatedApiErrorRateRule } from "./rules/elevated-api-error-rate.rule";
 import { UnusualCommitVolumeRule } from "./rules/unusual-commit-volume.rule";
@@ -16,6 +17,7 @@ import { SECURITY_RULES } from "./security-rule";
     ElevatedApiErrorRateRule,
     UnusualCommitVolumeRule,
     DevicePostureRule,
+    DeviceDataQualityRule,
     SecurityDetectionService,
     {
       provide: SECURITY_RULES,
@@ -24,12 +26,14 @@ import { SECURITY_RULES } from "./security-rule";
         elevatedErrorRate: ElevatedApiErrorRateRule,
         unusualCommitVolume: UnusualCommitVolumeRule,
         devicePosture: DevicePostureRule,
-      ) => [apiUsageSpike, elevatedErrorRate, unusualCommitVolume, devicePosture],
+        deviceDataQuality: DeviceDataQualityRule,
+      ) => [apiUsageSpike, elevatedErrorRate, unusualCommitVolume, devicePosture, deviceDataQuality],
       inject: [
         ApiUsageSpikeRule,
         ElevatedApiErrorRateRule,
         UnusualCommitVolumeRule,
         DevicePostureRule,
+        DeviceDataQualityRule,
       ],
     },
   ],

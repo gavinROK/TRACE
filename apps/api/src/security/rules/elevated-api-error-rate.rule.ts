@@ -43,6 +43,7 @@ export class ElevatedApiErrorRateRule implements SecurityRule {
 
       findings.push({
         type: SecurityAlertType.ELEVATED_API_ERROR_RATE,
+        dedupeKey: provider,
         severity: errorRate >= HIGH_ERROR_RATE ? AlertSeverity.HIGH : AlertSeverity.MEDIUM,
         reason:
           `${(errorRate * 100).toFixed(0)}% of requests to "${provider}" failed in the ` +

@@ -53,8 +53,12 @@ describe("SecurityDetectionService", () => {
     expect(prisma.securityAlert.create).not.toHaveBeenCalled();
   });
 
-  it("checks for an existing open alert scoped to type, developer, and org", async () => {
-    const rule = { evaluate: jest.fn().mockResolvedValue([finding({ developerId: "dev_1" })]) };
+  it("checks for an existing open alert scoped to type, dedupeKey, developer, and org", async () => {
+    const rule = {
+      evaluate: jest
+        .fn()
+        .mockResolvedValue([finding({ developerId: "dev_1", dedupeKey: "device_1" })]),
+    };
     const service = new SecurityDetectionService([rule], prisma as never);
     prisma.securityAlert.findFirst.mockResolvedValue(null);
     prisma.securityAlert.create.mockResolvedValue({ id: "alert_1" });
@@ -65,11 +69,37 @@ describe("SecurityDetectionService", () => {
       where: {
         organizationId: "org_1",
         type: SecurityAlertType.API_USAGE_SPIKE,
+        dedupeKey: "device_1",
         developerId: "dev_1",
         status: AlertStatus.OPEN,
         detectedAt: { gte: expect.any(Date) },
       },
     });
+  });
+
+  it("does not drop a second finding that shares type+developerId but has a different dedupeKey", async () => {
+    // The exact bug this column fixes: two devices owned by the same
+    // person, both flagged by the same rule in the same run, must both
+    // be persisted rather than the second looking like a duplicate.
+    const rule = {
+      evaluate: jest.fn().mockResolvedValue([
+        finding({ developerId: "dev_1", dedupeKey: "device_a" }),
+        finding({ developerId: "dev_1", dedupeKey: "device_b" }),
+      ]),
+    };
+    const service = new SecurityDetectionService([rule], prisma as never);
+    prisma.securityAlert.findFirst.mockResolvedValue(null);
+    prisma.securityAlert.create.mockResolvedValue({ id: "alert" });
+
+    const created = await service.runDetection("org_1");
+
+    expect(created).toHaveLength(2);
+    expect(prisma.securityAlert.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ dedupeKey: "device_a" }) }),
+    );
+    expect(prisma.securityAlert.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ dedupeKey: "device_b" }) }),
+    );
   });
 
   it("runs every registered rule and aggregates their findings", async () => {

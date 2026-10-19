@@ -15,9 +15,13 @@ export class SecurityDetectionService {
   /**
    * Runs every registered rule for one organization and persists any new
    * findings — skipping a finding if an equivalent alert (same type,
-   * same developer-or-org-wide scope, still OPEN) was already created
-   * within the dedupe window, so re-running this repeatedly doesn't spam
-   * duplicate alerts for the same ongoing condition.
+   * same dedupeKey, same developer-or-org-wide scope, still OPEN) was
+   * already created within the dedupe window, so re-running this
+   * repeatedly doesn't spam duplicate alerts for the same ongoing
+   * condition. dedupeKey (not just type+developerId) is what lets two
+   * genuinely different findings — e.g. two separate devices owned by
+   * the same person — both get persisted instead of the second looking
+   * like a duplicate of the first.
    */
   async runDetection(organizationId: string): Promise<SecurityAlert[]> {
     const dedupeSince = new Date();
@@ -33,6 +37,7 @@ export class SecurityDetectionService {
           where: {
             organizationId,
             type: finding.type,
+            dedupeKey: finding.dedupeKey ?? null,
             developerId: finding.developerId ?? null,
             status: AlertStatus.OPEN,
             detectedAt: { gte: dedupeSince },
@@ -44,6 +49,7 @@ export class SecurityDetectionService {
           data: {
             organizationId,
             type: finding.type,
+            dedupeKey: finding.dedupeKey,
             severity: finding.severity,
             developerId: finding.developerId,
             reason: finding.reason,

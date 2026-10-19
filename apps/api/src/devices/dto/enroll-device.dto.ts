@@ -1,6 +1,16 @@
-import { IsBoolean, IsIn, IsOptional, IsString, MinLength } from "class-validator";
+import { IsBoolean, IsISO8601, IsIn, IsOptional, IsString, MinLength } from "class-validator";
 
-const DEVICE_TYPES = ["LAPTOP", "DESKTOP", "MOBILE", "SERVER", "OTHER"] as const;
+const DEVICE_TYPES = [
+  "LAPTOP",
+  "DESKTOP",
+  "MOBILE",
+  "SERVER",
+  "SWITCH",
+  "ROUTER",
+  "ACCESS_POINT",
+  "VIRTUAL_MACHINE",
+  "OTHER",
+] as const;
 
 /**
  * Manual enrollment only — this DTO has no `enrollmentType` field, so a
@@ -32,6 +42,12 @@ export class EnrollDeviceDto {
   @IsString()
   ownerId?: string;
 
+  /** Must belong to the caller's own organization — validated in the service.
+   * Independent of `ownerId` — a device may have either, both, or neither. */
+  @IsOptional()
+  @IsString()
+  departmentId?: string;
+
   @IsOptional()
   @IsBoolean()
   diskEncrypted?: boolean;
@@ -47,4 +63,9 @@ export class EnrollDeviceDto {
   @IsOptional()
   @IsBoolean()
   screenLockEnabled?: boolean;
+
+  /** Self-reported — e.g. "I physically checked this device on this date." */
+  @IsOptional()
+  @IsISO8601()
+  lastCheckInAt?: string;
 }

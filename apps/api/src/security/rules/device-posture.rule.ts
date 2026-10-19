@@ -42,6 +42,11 @@ export class DevicePostureRule implements SecurityRule {
 
       findings.push({
         type: SecurityAlertType.DEVICE_POSTURE_RISK,
+        // Without this, two devices owned by the same person would
+        // collide in SecurityDetectionService's dedup check (same type,
+        // same developerId) and the second would be silently dropped as
+        // a false "duplicate" of the first.
+        dedupeKey: device.id,
         severity: status === "CRITICAL" ? AlertSeverity.HIGH : AlertSeverity.MEDIUM,
         developerId: device.ownerId ?? undefined,
         reason:

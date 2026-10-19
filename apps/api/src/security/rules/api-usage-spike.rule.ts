@@ -65,6 +65,7 @@ export class ApiUsageSpikeRule implements SecurityRule {
 
       findings.push({
         type: SecurityAlertType.API_USAGE_SPIKE,
+        dedupeKey: provider,
         severity,
         reason:
           `API requests to "${provider}" in the last 24h (${last24h}) are well above ` +
