@@ -1,5 +1,5 @@
-import { OrgGraph } from "@/components/OrgGraph";
+import { TraceShell } from "@/components/shell/TraceShell";
 
 export default function Home() {
-  return <OrgGraph />;
+  return <TraceShell />;
 }

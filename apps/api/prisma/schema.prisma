@@ -1,0 +1,877 @@
+// TRACE data model.
+//
+// Mirrors the org/department/developer hierarchy the frontend already
+// renders (apps/web/lib/types.ts) and adds the records needed for real
+// GitHub integration, API telemetry, and security alerting.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// A tenant. All other rows are scoped to one organization; cross-org
+/// access is what the API's authorization layer must prevent.
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  apiKeys       ApiKey[]
+  departments   Department[]
+  developers    Developer[]
+  installations GithubInstallation[]
+  repositories  Repository[]
+  activityEvents ActivityEvent[]
+  apiUsageEvents ApiUsageEvent[]
+  securityAlerts SecurityAlert[]
+  devices        Device[]
+  softwareInstallations SoftwareInstallation[]
+
+  @@map("organizations")
+}
+
+/// Development-only authorization mechanism: a bearer key scoped to one
+/// organization. Stands in for a real auth/session system (see
+/// docs/DEVELOPMENT_STATUS.md "Known limitations") — do not deploy this
+/// as-is. Only the key's hash is stored.
+model ApiKey {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  label          String
+  hashedKey      String       @unique
+  createdAt      DateTime     @default(now())
+
+  @@map("api_keys")
+}
+
+model Department {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  name           String
+  description    String?
+  createdAt      DateTime     @default(now())
+
+  developers Developer[]
+  assignedDevices Device[]
+
+  @@map("departments")
+}
+
+/// A developer identity within an organization. Not necessarily linked to
+/// a GitHub account yet — `githubLogin` is set once a GitHub sync matches
+/// one.
+model Developer {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  department     Department?  @relation(fields: [departmentId], references: [id])
+  departmentId   String?
+  name           String
+  role           String
+  email          String?
+  githubLogin    String?
+  createdAt      DateTime     @default(now())
+
+  activityEvents ActivityEvent[]
+  apiUsageEvents ApiUsageEvent[]
+  securityAlerts SecurityAlert[]
+  ownedDevices   Device[]
+
+  @@unique([organizationId, email])
+  @@map("developers")
+}
+
+/// One GitHub App installation on an org/user account, connected by an
+/// authorized member of that organization.
+model GithubInstallation {
+  id             String       @id @default(cuid())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  organizationId String
+  installationId BigInt       @unique
+  accountLogin   String
+  accountType    String
+  createdAt      DateTime     @default(now())
+
+  repositories Repository[]
+
+  @@map("github_installations")
+}
+
+model Repository {
+  id             String              @id @default(cuid())
+  organization   Organization        @relation(fields: [organizationId], references: [id])
+  organizationId String
+  installation   GithubInstallation? @relation(fields: [installationId], references: [id], onDelete: SetNull)
+  installationId String?
+  githubId       BigInt              @unique
+  name           String
+  fullName       String
+  isPrivate      Boolean             @default(false)
+  defaultBranch  String              @default("main")
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  activityEvents ActivityEvent[]
+
+  @@map("repositories")
+}
+
+/// A generic feed of developer/repository activity: commits, pull requests,
+/// reviews, etc. `type` is a free-form, documented string (see
+/// apps/api/src/activity/activity-event-type.ts) rather than an enum, since
+/// GitHub's own event vocabulary is larger than we need to hard-code up
+/// front.
+model ActivityEvent {
+  id             String        @id @default(cuid())
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  organizationId String
+  developer      Developer?    @relation(fields: [developerId], references: [id])
+  developerId    String?
+  repository     Repository?   @relation(fields: [repositoryId], references: [id])
+  repositoryId   String?
+  type           String
+  /// GitHub's commit sha, `pull_request` number, etc. — whatever makes
+  /// this event idempotent to re-sync. Null for events with no natural
+  /// external identity.
+  ///
+  /// Scoped to (organizationId, repositoryId, type, externalId), not just
+  /// (organizationId, type, externalId) — a pull_request's `number` is
+  /// only unique *within its own repository*, not across an organization,
+  /// so repositoryId must be part of the dedupe key or PR #1 in one repo
+  /// collides with PR #1 in another.
+  externalId     String?
+  occurredAt     DateTime
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+
+  @@unique([organizationId, repositoryId, type, externalId])
+  @@index([organizationId, occurredAt])
+  @@map("activity_events")
+}
+
+/// Which kind of identity reported an API usage event. TRACE must not
+/// assume every request can be attributed to a specific employee.
+enum ActorType {
+  VERIFIED
+  INFERRED
+  UNKNOWN
+}
+
+/// One reported unit of API usage, submitted by the telemetry SDK. Never
+/// contains API keys, prompt/response bodies, or other sensitive payloads
+/// — see apps/api/src/telemetry for the enforced shape.
+model ApiUsageEvent {
+  id                String       @id @default(cuid())
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  organizationId    String
+  developer         Developer?   @relation(fields: [developerId], references: [id])
+  developerId       String?
+  actorType         ActorType    @default(UNKNOWN)
+  provider          String
+  service           String
+  requestCount      Int          @default(1)
+  tokenCount         Int?
+  estimatedCostUsd   Float?
+  latencyMs          Int?
+  errorCount         Int          @default(0)
+  occurredAt         DateTime
+  createdAt          DateTime     @default(now())
+
+  @@index([organizationId, occurredAt])
+  @@index([organizationId, provider])
+  @@map("api_usage_events")
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  DISMISSED
+}
+
+/// A deterministic security detection. `evidence` holds the structured
+/// facts the rule evaluated; `reason` is the human-readable explanation of
+/// why those facts triggered this alert. See apps/api/src/security for the
+/// rule engine that produces these.
+model SecurityAlert {
+  id                String        @id @default(cuid())
+  organization      Organization  @relation(fields: [organizationId], references: [id])
+  organizationId    String
+  developer         Developer?    @relation(fields: [developerId], references: [id])
+  developerId       String?
+  type              String
+  /// Identifies the specific subject a finding is about (a device id, a
+  /// provider name, ...) — set by the rule that produced it. Without
+  /// this, dedup could only key on (type, developerId), which silently
+  /// collapsed genuinely distinct findings whenever a rule could produce
+  /// more than one for the same type/developer (e.g. two devices owned
+  /// by the same person, both flagged by DevicePostureRule, would
+  /// otherwise look like duplicates of each other). Null is valid for a
+  /// rule with no natural per-run duplicate subject.
+  dedupeKey         String?
+  severity          AlertSeverity
+  status            AlertStatus   @default(OPEN)
+  detectedAt        DateTime      @default(now())
+  reason            String
+  recommendedSteps  String[]
+  evidence          Json
+  createdAt         DateTime      @default(now())
+
+  @@index([organizationId, status])
+  @@index([organizationId, type, dedupeKey, status])
+  @@map("security_alerts")
+}
+
+enum DeviceType {
+  LAPTOP
+  DESKTOP
+  MOBILE
+  SERVER
+  // Network infrastructure — not user-owned, usually assigned to a
+  // department rather than a person. Deliberately kept as more values on
+  // the same Device/DeviceType model rather than a parallel "Asset"
+  // entity: ownership, posture, and graph placement all already work the
+  // same way for a laptop as for a switch.
+  SWITCH
+  ROUTER
+  ACCESS_POINT
+  VIRTUAL_MACHINE
+  OTHER
+}
+
+/// How a device's record came to exist. AGENT is reserved for a future
+/// endpoint agent (see docs/DEVELOPMENT_STATUS.md) — nothing writes it yet;
+/// included now so that feature doesn't need a migration to add it later.
+enum DeviceEnrollmentType {
+  MANUAL
+  SIMULATED
+  AGENT
+}
+
+/// A device inventory record. Ownership is a plain foreign key, not a
+/// structural position in the org graph — like Repository, a device is
+/// rendered under its own top-level branch, with its owner (if any) shown
+/// as a field, not as a parent/child nesting (the graph's entities form a
+/// single-parent tree; letting a device appear under both its owner and a
+/// flat "Devices" branch isn't representable in that shape without a
+/// larger rewrite).
+///
+/// Posture fields are nullable — a device TRACE has never heard from
+/// (manually enrolled, no agent) genuinely has *unknown* posture, which is
+/// a different fact than "known to be disabled." Only an explicit `false`
+/// counts as a finding; `null` never does (see DevicePostureRule).
+model Device {
+  id                 String               @id @default(cuid())
+  organization       Organization         @relation(fields: [organizationId], references: [id])
+  organizationId     String
+  owner              Developer?           @relation(fields: [ownerId], references: [id])
+  ownerId            String?
+  /// For infrastructure that belongs to a team rather than a person (a
+  /// switch, a shared VM) — independent of `owner`; a device may have
+  /// either, both, or neither.
+  department         Department?          @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  departmentId       String?
+  name               String
+  deviceType         DeviceType
+  operatingSystem    String
+  osVersion          String
+  serialNumber       String?
+  enrollmentType     DeviceEnrollmentType @default(MANUAL)
+  diskEncrypted      Boolean?
+  firewallEnabled    Boolean?
+  osUpToDate         Boolean?
+  screenLockEnabled  Boolean?
+  /// Self-reported, not agent-collected (no agent exists yet) — e.g. an
+  /// IT admin recording "I physically checked this device on this date."
+  /// Null means no check-in has ever been recorded, which is a *missing
+  /// information* fact, not evidence the device is stale — see
+  /// DeviceDataQualityRule.
+  lastCheckInAt      DateTime?
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+
+  software           SoftwareInstallation[]
+
+  @@index([organizationId])
+  @@map("devices")
+}
+
+enum SoftwareInventorySource {
+  MANUAL
+  CSV_IMPORT
+}
+
+/// One application installed on one device. Deliberately denormalized
+/// (name/version/publisher stored directly, no separate "Application"
+/// catalog) — a catalog entity would be premature for a first version
+/// with no data yet to justify it.
+model SoftwareInstallation {
+  id             String                  @id @default(cuid())
+  organization   Organization            @relation(fields: [organizationId], references: [id])
+  organizationId String
+  device         Device                  @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId       String
+  name           String
+  version        String?
+  publisher      String?
+  installedAt    DateTime?
+  source         SoftwareInventorySource @default(MANUAL)
+  createdAt      DateTime                @default(now())
+
+  @@index([organizationId])
+  @@index([deviceId])
+  @@map("software_installations")
+}
+
+// ---------------------------------------------------------------------------
+// Infrastructure control plane.
+//
+// A deliberately separate domain from Organization/Department/Developer/
+// Device above (the "developer intelligence" product) — an InfraDevice is a
+// piece of infrastructure (a hypervisor, a switch, a VM) discovered and
+// administered through a connector, not an employee's laptop. The two
+// domains share nothing but the Prisma client and the NestJS process; see
+// docs/ARCHITECTURE.md.
+// ---------------------------------------------------------------------------
+
+/// A top-level tenant/boundary for infrastructure: separate devices,
+/// credentials, metrics, and audit history per environment (e.g. "Gavin's
+/// Home Infrastructure" vs. a future "Customer Infrastructure"). Unrelated
+/// to Organization above — that model is the developer-intelligence
+/// tenant, this is the infrastructure one.
+model InfraEnvironment {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  devices      InfraDevice[]
+  credentials  InfraCredential[]
+  commandRuns  InfraCommandRun[]
+  auditEntries InfraAuditLogEntry[]
+  relationships InfraRelationship[]
+  aiConversations AiConversation[]
+  credentialEnrollmentSessions CredentialEnrollmentSession[]
+
+  @@map("infra_environments")
+}
+
+enum InfraDeviceCategory {
+  PHYSICAL_SERVER
+  VIRTUAL_MACHINE
+  CONTAINER
+  ROUTER
+  FIREWALL
+  MANAGED_SWITCH
+  NAS
+  STORAGE_DEVICE
+  PRINTER
+  KVM
+  WORKSTATION
+  GENERIC_NETWORK_DEVICE
+}
+
+/// A management protocol TRACE can reach a device through. Listing one
+/// here is a capability claim the backend must actually implement a
+/// connector for (see infra/connectors) — the frontend is only allowed to
+/// show controls backed by a protocol the device actually reports.
+enum InfraManagementProtocol {
+  SSH
+  PROXMOX_API
+  SNMP_V3
+  VENDOR_API
+  WINDOWS_WINRM
+  DOCKER_API
+  NONE
+}
+
+enum InfraEnrollmentStatus {
+  /// Seen by discovery, not yet enrolled — no credentials attached.
+  DISCOVERED
+  /// Enrolled with credentials, but TRACE has not yet verified it can
+  /// actually connect.
+  PENDING
+  /// At least one successful connector call has succeeded.
+  ENROLLED
+  ENROLLMENT_FAILED
+  DISABLED
+}
+
+enum InfraOnlineState {
+  /// No reachability check has ever succeeded or failed for this device.
+  /// Distinct from OFFLINE — absence of a signal is not evidence of
+  /// being down.
+  UNKNOWN
+  ONLINE
+  OFFLINE
+}
+
+/// The unified device model (PRODUCT_SPEC.md section 5). One row per
+/// discovered or manually-enrolled infrastructure asset.
+model InfraDevice {
+  id              String               @id @default(cuid())
+  environment     InfraEnvironment     @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId   String
+  name            String
+  category        InfraDeviceCategory
+  manufacturer    String?
+  model           String?
+  operatingSystem String?
+  osVersion       String?
+  ipAddresses     String[]
+  macAddresses    String[]
+  /// The port TRACE connects to for its primary management protocol
+  /// (e.g. 22 for SSH, 8006 for Proxmox, 161 for SNMP) — editable from
+  /// the device settings panel so a non-default port doesn't require a
+  /// database edit.
+  managementPort  Int?
+  managementProtocols InfraManagementProtocol[]
+  /// Free-form operator-assigned labels (e.g. "homelab", "critical") —
+  /// never used for authorization, purely organizational.
+  tags            String[]
+  enrollmentStatus InfraEnrollmentStatus @default(DISCOVERED)
+  onlineState     InfraOnlineState     @default(UNKNOWN)
+  lastContactAt   DateTime?
+  notes           String?
+  /// How this row came to exist, for the audit trail a discovery import
+  /// leaves behind — e.g. "manual", "discovery:arp", "discovery:nmap",
+  /// "discovery:proxmox". Null for rows created before this field existed.
+  discoverySource String?
+  discoveredAt    DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  /// For a VM/container, the hypervisor or host it runs on. Null for
+  /// anything that is not virtualized.
+  parentDevice    InfraDevice?  @relation("InfraDeviceParent", fields: [parentDeviceId], references: [id], onDelete: SetNull)
+  parentDeviceId  String?
+  children        InfraDevice[] @relation("InfraDeviceParent")
+
+  credentials      InfraCredential[]
+  metricSamples    InfraMetricSample[]
+  commandRuns      InfraCommandRun[]
+  relationshipsFrom InfraRelationship[] @relation("InfraRelationshipFrom")
+  relationshipsTo   InfraRelationship[] @relation("InfraRelationshipTo")
+  credentialEnrollmentSessions CredentialEnrollmentSession[]
+
+  @@unique([environmentId, name])
+  @@index([environmentId])
+  @@index([parentDeviceId])
+  @@map("infra_devices")
+}
+
+enum InfraRelationshipKind {
+  /// Observed directly by a connector (e.g. Proxmox reporting a VM's
+  /// host, or LLDP/SNMP reporting a switch port's neighbor).
+  VERIFIED
+  /// A best-effort guess (e.g. "on the same subnet") that a human should
+  /// confirm or correct — never rendered the same as VERIFIED.
+  INFERRED
+}
+
+enum InfraRelationshipType {
+  HOSTS
+  CONNECTED_TO
+  DEPENDS_ON
+}
+
+model InfraRelationship {
+  id            String                 @id @default(cuid())
+  environment   InfraEnvironment       @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId String
+  fromDevice    InfraDevice            @relation("InfraRelationshipFrom", fields: [fromDeviceId], references: [id], onDelete: Cascade)
+  fromDeviceId  String
+  toDevice      InfraDevice            @relation("InfraRelationshipTo", fields: [toDeviceId], references: [id], onDelete: Cascade)
+  toDeviceId    String
+  type          InfraRelationshipType
+  kind          InfraRelationshipKind  @default(INFERRED)
+  notes         String?
+  createdAt     DateTime               @default(now())
+
+  @@unique([fromDeviceId, toDeviceId, type])
+  @@index([environmentId])
+  @@map("infra_relationships")
+}
+
+/// A secret (SSH key passphrase, Proxmox API token, SNMPv3 auth/priv
+/// keys, ...) encrypted at rest with AES-256-GCM. The key never touches
+/// this table in plaintext; see infra/credentials/secret-cipher.ts. The
+/// master encryption key itself lives outside Postgres (macOS Keychain in
+/// local dev — see infra/credentials/master-key.store.ts), so a database
+/// dump alone is never enough to recover a credential.
+model InfraCredential {
+  id               String                   @id @default(cuid())
+  environment      InfraEnvironment         @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId    String
+  device           InfraDevice?             @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId         String?
+  label            String
+  protocol         InfraManagementProtocol
+  encryptedPayload String
+  iv               String
+  authTag          String
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  enrollmentSession CredentialEnrollmentSession?
+
+  @@index([environmentId])
+  @@index([deviceId])
+  @@map("infra_credentials")
+}
+
+enum CredentialEnrollmentStatus {
+  /// A human approved the proposing MCP tool call and has up to
+  /// `expiresAt` to type a credential into TRACE's own UI.
+  AUTHORIZED
+  /// A credential was written via `complete()` — see credentialId.
+  /// Terminal; the session can never be reused after this.
+  COMPLETED
+  /// `expiresAt` passed with nothing submitted. Terminal.
+  EXPIRED
+  /// The human cancelled it, or a newer session for the same device
+  /// superseded it. Terminal.
+  REVOKED
+}
+
+/// TRACE v0.5: a short-lived, single-use window that lets an external
+/// MCP client (Claude) *request* a credential be enrolled without ever
+/// seeing the secret itself. The secret is never part of this row and
+/// never part of the AiPendingAction this session is created from (see
+/// credential-enrollment.service.ts `authorizeSession` and
+/// AiToolsRegistryService's `request_credential_enrollment` handler) —
+/// it is typed directly into TRACE's own dashboard by the human who
+/// approved the request, through the same CredentialsService.create()
+/// (and therefore the same AES-256-GCM/MasterKeyStore encryption) the
+/// manual "+ Add credential" form already uses. This model only ever
+/// carries metadata: protocol, an operator-chosen label, and timing.
+model CredentialEnrollmentSession {
+  id            String                      @id @default(cuid())
+  environment   InfraEnvironment            @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId String
+  device        InfraDevice                 @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId      String
+  protocol      InfraManagementProtocol
+  /// Operator-chosen label carried from the MCP proposal, purely for
+  /// display — the same free-text label the manual credential form
+  /// takes, not used for authorization.
+  label         String?
+  status        CredentialEnrollmentStatus  @default(AUTHORIZED)
+  /// The browser-session actor ("user:<id>") who approved the
+  /// proposing pending action — i.e. who authorized this window to
+  /// open. Never the MCP service-token actor; see
+  /// ApprovalsService.decide's refusal of a claude-mcp decider, which
+  /// this inherits transitively since authorizeSession is only ever
+  /// called with the approver's own actor string.
+  requestedBy   String
+  createdAt     DateTime                    @default(now())
+  /// Always createdAt + 5 minutes — see FIVE_MINUTES_MS in
+  /// credential-enrollment.service.ts. Not configurable per-call: the
+  /// 5-minute ceiling is a product requirement, not a tool parameter.
+  expiresAt     DateTime
+  completedAt   DateTime?
+  credential    InfraCredential?            @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  credentialId  String?                     @unique
+
+  @@index([environmentId, deviceId])
+  @@index([deviceId, status])
+  @@map("credential_enrollment_sessions")
+}
+
+enum InfraMetricKind {
+  CPU_UTILIZATION
+  MEMORY_UTILIZATION
+  DISK_UTILIZATION
+  NETWORK_RX_THROUGHPUT
+  NETWORK_TX_THROUGHPUT
+  UPTIME_SECONDS
+  /// Absolute byte figures, alongside the _UTILIZATION percentages
+  /// above — the dashboard's aggregate memory/storage capacity (section
+  /// 8) sums these across hosts, which a bare percentage can't support
+  /// (averaging percentages across differently-sized hosts is simply
+  /// wrong). Still always a real reading from the connector, same as
+  /// every other metric kind — never derived or estimated.
+  MEMORY_USED_BYTES
+  MEMORY_TOTAL_BYTES
+  DISK_USED_BYTES
+  DISK_TOTAL_BYTES
+  CUSTOM
+}
+
+/// One collected telemetry point. Always has a real `collectedAt` from
+/// the moment the connector actually took the reading — never backfilled
+/// or interpolated (see docs/ARCHITECTURE.md "no fabricated metrics").
+model InfraMetricSample {
+  id          String           @id @default(cuid())
+  device      InfraDevice      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId    String
+  kind        InfraMetricKind
+  label       String?
+  value       Float
+  unit        String
+  collectedAt DateTime         @default(now())
+
+  @@index([deviceId, kind, collectedAt])
+  @@map("infra_metric_samples")
+}
+
+enum InfraCommandStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  TIMED_OUT
+  CANCELLED
+}
+
+/// One command-console invocation against one device. `targetLabel`
+/// duplicates the resolved device name at run time so the audit trail
+/// stays legible even if the device is later renamed or deleted.
+model InfraCommandRun {
+  id            String              @id @default(cuid())
+  environment   InfraEnvironment    @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId String
+  device        InfraDevice?        @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  deviceId      String?
+  targetLabel   String
+  command       String
+  status        InfraCommandStatus  @default(PENDING)
+  exitCode      Int?
+  stdout        String?
+  stderr        String?
+  requestedBy   String
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  timeoutMs     Int?
+  createdAt     DateTime            @default(now())
+
+  @@index([environmentId, createdAt])
+  @@index([deviceId])
+  @@map("infra_command_runs")
+}
+
+/// General security/audit trail, separate from InfraCommandRun — covers
+/// logins, credential changes, and performAction() calls (start/stop a
+/// VM, etc.), not just console command execution.
+model InfraAuditLogEntry {
+  id            String            @id @default(cuid())
+  environment   InfraEnvironment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  environmentId String?
+  actor         String
+  action        String
+  targetType    String?
+  targetId      String?
+  outcome       String
+  detail        Json?
+  createdAt     DateTime          @default(now())
+
+  @@index([environmentId, createdAt])
+  @@map("infra_audit_log_entries")
+}
+
+/// The single TRACE operator account. Deliberately just one row per
+/// deployment for v1 (PRODUCT_SPEC.md section 14: "design for future
+/// multi-user access without unnecessarily complicating the initial
+/// single-user deployment") — environment-scoped data already isolates
+/// per-tenant without a user/role join table that nothing uses yet.
+model TraceUser {
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  passwordHash        String?
+  createdAt           DateTime             @default(now())
+  webauthnCredentials WebauthnCredential[]
+  sessions            TraceSession[]
+
+  @@map("trace_users")
+}
+
+/// A registered WebAuthn authenticator (e.g. a YubiKey). `counter` is the
+/// authenticator's signature counter, used to detect cloned credentials —
+/// a verified assertion whose counter did not increase is rejected.
+model WebauthnCredential {
+  id           String        @id @default(cuid())
+  user         TraceUser     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       String
+  credentialId String        @unique
+  publicKey    String
+  counter      BigInt        @default(0)
+  transports   String[]
+  deviceLabel  String?
+  createdAt    DateTime      @default(now())
+
+  @@map("webauthn_credentials")
+}
+
+/// Only `tokenHash` (sha256 of the session cookie value) is stored — the
+/// raw session token exists only in the client's cookie, same pattern as
+/// ApiKey.hashedKey above.
+model TraceSession {
+  id        String    @id @default(cuid())
+  user      TraceUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String    @unique
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+
+  @@map("trace_sessions")
+}
+
+// --- Native AI assistant (TRACE v0.3) ---
+// The assistant never gets its own copy of infrastructure state or its
+// own connector logic — see apps/api/src/infra/ai. These models exist
+// only to persist conversations and provider configuration; every tool
+// call the assistant makes reads/writes through the same services the
+// browser console already uses.
+
+enum AiProviderKind {
+  ANTHROPIC
+  /// Reserved for a future provider — see ai/providers/ai-provider.interface.ts.
+  /// Not implemented; selecting this has no effect yet.
+  OPENAI
+  /// Reserved for a future local-model provider. Not implemented.
+  LOCAL
+}
+
+/// One encrypted API key per provider (same AES-256-GCM construction as
+/// InfraCredential, via the identical secret-cipher.ts + MasterKeyStore —
+/// no second encryption implementation). Single operator, so at most one
+/// row per provider ever exists.
+model AiProviderSetting {
+  id               String         @id @default(cuid())
+  provider         AiProviderKind @unique
+  encryptedApiKey  String
+  iv               String
+  authTag          String
+  /// The model id the operator picked in Settings, e.g. "claude-sonnet-5".
+  /// Null until they choose one; the chat UI falls back to a maintained
+  /// default (see ai/providers/anthropic-models.ts) when null.
+  selectedModel    String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@map("ai_provider_settings")
+}
+
+/// One chat thread. `actor` is the owning TraceUser's guard-assigned actor
+/// string (e.g. "user:<id>") — conversations are private to the operator
+/// who started them, same ownership model as everything else in TRACE
+/// (single-operator today; environment-scoped data already isolates
+/// per-tenant without a role table nothing uses yet).
+model AiConversation {
+  id                String            @id @default(cuid())
+  environment       InfraEnvironment  @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId     String
+  actor             String
+  title             String?
+  /// A snapshot of the device selected in the UI when the conversation
+  /// started — kept as plain fields (not a relation) so a later device
+  /// rename/delete never breaks history; see PRODUCT_SPEC section 8.
+  deviceContextId   String?
+  deviceContextName String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  messages       AiMessage[]
+  pendingActions AiPendingAction[]
+
+  @@index([environmentId, actor])
+  @@map("ai_conversations")
+}
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+  /// A tool result fed back into the model — never user-authored text,
+  /// always structured output from a TRACE service call.
+  TOOL
+}
+
+/// One turn in a conversation. `content` is the rendered markdown text
+/// shown to the user (empty string for a pure tool-call turn with no
+/// prose). `toolCalls`/`toolResults` are redacted (see
+/// ai/secret-redaction.ts) before this row is ever written — nothing
+/// here can contain a decrypted credential, because no tool handler
+/// this assistant can call ever receives one (see devices.service.ts /
+/// credentials.service.ts: no controller-reachable method returns a
+/// decrypted payload, and the AI tool layer only calls controller-
+/// reachable methods).
+model AiMessage {
+  id               String         @id @default(cuid())
+  conversation     AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId   String
+  role             AiMessageRole
+  content          String
+  toolCalls        Json?
+  toolResults      Json?
+  model            String?
+  inputTokens      Int?
+  outputTokens     Int?
+  estimatedCostUsd Float?
+  createdAt        DateTime       @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+/// How a tool call was classified at the moment it was proposed — see
+/// ai/ai-tools.registry.ts's ACTION_CLASSIFICATION table, PRODUCT_SPEC
+/// v0.3 section 5.
+enum AiActionClassification {
+  READ_ONLY
+  ADMINISTRATIVE
+  DESTRUCTIVE
+}
+
+enum AiPendingActionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  /// Reserved for a future TTL sweep; nothing sets this yet.
+  EXPIRED
+}
+
+/// An ADMINISTRATIVE or DESTRUCTIVE tool call an AI surface proposed but
+/// did not execute — created by EITHER the native chat assistant's own
+/// tool-call loop (conversationId set) OR an external MCP client's
+/// request (TRACE v0.4: conversationId null, requestedBy "claude-mcp" —
+/// see apps/api/src/infra/approvals). Only a separate, human-initiated
+/// HTTP call to POST .../ai/pending-actions/:id/approve (never something
+/// a model's own output can trigger — see
+/// approvals/approvals.service.ts) flips this to APPROVED and actually
+/// runs it. `decidedBy` must be a browser-session actor — the guard
+/// never assigns the MCP service-token actor to that endpoint, and
+/// ApprovalsService.decide refuses a "claude-mcp"-prefixed decider as
+/// defense in depth, so neither AI surface can approve its own action.
+model AiPendingAction {
+  id             String                  @id @default(cuid())
+  conversation   AiConversation?         @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  conversationId String?
+  environmentId  String
+  toolName       String
+  toolInput      Json
+  classification AiActionClassification
+  status         AiPendingActionStatus   @default(PENDING)
+  requestedBy    String
+  decidedBy      String?
+  decidedAt      DateTime?
+  resultJson     Json?
+  createdAt      DateTime                @default(now())
+
+  @@index([conversationId])
+  @@index([environmentId, status])
+  @@map("ai_pending_actions")
+}

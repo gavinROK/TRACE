@@ -1,14 +1,60 @@
-import type { OrgEntity } from "@/lib/types";
+import type { DeviceEntity, OrgEntity } from "@/lib/types";
+import type { BackendMode } from "@/lib/useGraphData";
+import { ApiUsageDashboardPanel } from "@/components/ApiUsageDashboardPanel";
+import { SecurityAlertsPanel } from "@/components/SecurityAlertsPanel";
+import { DeviceProfilePanel } from "@/components/DeviceProfilePanel";
+import { DeviceInventoryPanel } from "@/components/DeviceInventoryPanel";
 
 interface DetailPanelProps {
   entity: OrgEntity;
   childEntities: OrgEntity[];
+  mode: BackendMode;
   onClose: () => void;
+  onDataChanged?: () => void;
+  /** Lets a panel (e.g. the device inventory table) select another entity. */
+  onSelectEntity?: (id: string) => void;
 }
 
-export function DetailPanel({ entity, childEntities, onClose }: DetailPanelProps) {
+export function DetailPanel({
+  entity,
+  childEntities,
+  mode,
+  onClose,
+  onDataChanged,
+  onSelectEntity,
+}: DetailPanelProps) {
+  if (entity.kind === "apiUsageDashboard") {
+    return <ApiUsageDashboardPanel onClose={onClose} />;
+  }
+  if (entity.kind === "securityAlertsGroup") {
+    return (
+      <SecurityAlertsPanel
+        onClose={onClose}
+        onDataChanged={onDataChanged}
+        onSelectEntity={onSelectEntity}
+      />
+    );
+  }
+  if (entity.kind === "device") {
+    return (
+      <DeviceProfilePanel entity={entity} mode={mode} onClose={onClose} onDataChanged={onDataChanged} />
+    );
+  }
+  if (entity.kind === "deviceGroup") {
+    return (
+      <DeviceInventoryPanel
+        devices={childEntities.filter((child): child is DeviceEntity => child.kind === "device")}
+        onClose={onClose}
+        onSelectDevice={onSelectEntity ?? (() => {})}
+      />
+    );
+  }
+
   return (
-    <aside className="absolute right-4 top-4 z-10 w-80 rounded-xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-sm">
+    <aside
+      data-testid="detail-panel"
+      className="absolute right-4 top-4 z-10 w-80 rounded-xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-sm"
+    >
       <div className="flex items-start justify-between gap-2">
         <div>
           <div className="text-xs uppercase tracking-wide text-slate-500">{entity.kind}</div>
@@ -23,11 +69,9 @@ export function DetailPanel({ entity, childEntities, onClose }: DetailPanelProps
           ✕
         </button>
       </div>
-
       <div className="mt-3 space-y-2 text-sm text-slate-300">
         <EntityFields entity={entity} />
       </div>
-
       {childEntities.length > 0 && (
         <div className="mt-4 border-t border-slate-800 pt-3">
           <div className="mb-2 text-xs uppercase tracking-wide text-slate-500">
@@ -60,6 +104,7 @@ function EntityFields({ entity }: { entity: OrgEntity }) {
   switch (entity.kind) {
     case "organization":
     case "department":
+    case "repositoryGroup":
       return <p className="text-slate-400">{entity.description}</p>;
     case "developer":
       return (
@@ -92,5 +137,20 @@ function EntityFields({ entity }: { entity: OrgEntity }) {
           <Field label="Severity" value={entity.severity} />
         </>
       );
+    case "repository":
+      return (
+        <>
+          <Field label="Full name" value={entity.fullName} />
+          <Field label="Visibility" value={entity.isPrivate ? "Private" : "Public"} />
+          <Field label="Default branch" value={entity.defaultBranch} />
+          <Field label="Commits" value={entity.commitCount} />
+          <Field label="Open pull requests" value={entity.openPullRequestCount} />
+        </>
+      );
+    case "apiUsageDashboard":
+    case "securityAlertsGroup":
+    case "deviceGroup":
+    case "device":
+      return null;
   }
 }

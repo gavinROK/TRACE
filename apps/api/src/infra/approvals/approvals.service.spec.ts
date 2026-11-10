@@ -1,0 +1,124 @@
+import { BadRequestException, ForbiddenException, NotFoundException } from "@nestjs/common";
+import { AiActionClassification, AiPendingActionStatus } from "@prisma/client";
+import { ApprovalsService } from "./approvals.service";
+
+describe("ApprovalsService", () => {
+  const prisma = {
+    aiPendingAction: {
+      create: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
+  };
+  const auditLog = { record: jest.fn() };
+  const service = new ApprovalsService(prisma as never, auditLog as never);
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it("create persists a PENDING row and audits it as 'proposed'", async () => {
+    prisma.aiPendingAction.create.mockResolvedValue({ id: "pa1" });
+
+    await service.create({
+      conversationId: "c1",
+      environmentId: "env1",
+      toolName: "execute_command",
+      toolInput: { deviceName: "beelink", command: "rm -rf /" },
+      classification: AiActionClassification.ADMINISTRATIVE,
+      requestedBy: "user:u1",
+    });
+
+    expect(prisma.aiPendingAction.create).toHaveBeenCalled();
+    expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: "ai.tool.execute_command.proposed", outcome: "success" }));
+  });
+
+  it("create works with no conversationId at all — an MCP-originated pending action", async () => {
+    prisma.aiPendingAction.create.mockResolvedValue({ id: "pa1" });
+
+    await service.create({
+      environmentId: "env1",
+      toolName: "perform_action",
+      toolInput: { deviceId: "d1", action: "stop" },
+      classification: AiActionClassification.DESTRUCTIVE,
+      requestedBy: "claude-mcp",
+    });
+
+    expect(prisma.aiPendingAction.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ conversationId: undefined, requestedBy: "claude-mcp" }) }),
+    );
+    expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ detail: expect.objectContaining({ source: "mcp" }) }));
+  });
+
+  it("create redacts anything secret-shaped out of the persisted toolInput", async () => {
+    prisma.aiPendingAction.create.mockResolvedValue({ id: "pa1" });
+    await service.create({
+      conversationId: "c1",
+      environmentId: "env1",
+      toolName: "update_device",
+      toolInput: { deviceId: "d1", notes: "password: hunter2secretvalue" },
+      classification: AiActionClassification.ADMINISTRATIVE,
+      requestedBy: "user:u1",
+    });
+    const written = prisma.aiPendingAction.create.mock.calls[0][0].data.toolInput;
+    expect(JSON.stringify(written)).not.toContain("hunter2secretvalue");
+  });
+
+  it("listPendingForEnvironment returns every pending action regardless of source", async () => {
+    prisma.aiPendingAction.findMany.mockResolvedValue([]);
+    await service.listPendingForEnvironment("env1");
+    expect(prisma.aiPendingAction.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { environmentId: "env1", status: AiPendingActionStatus.PENDING } }),
+    );
+  });
+
+  it("the AI/MCP service-token identity can never decide its own pending action", async () => {
+    prisma.aiPendingAction.findFirst.mockResolvedValue({
+      id: "pa1",
+      status: AiPendingActionStatus.PENDING,
+      toolName: "execute_command",
+      toolInput: {},
+      classification: AiActionClassification.ADMINISTRATIVE,
+      conversationId: null,
+    });
+
+    await expect(service.decide("env1", "pa1", "claude-mcp", true)).rejects.toThrow(ForbiddenException);
+    expect(prisma.aiPendingAction.update).not.toHaveBeenCalled();
+  });
+
+  it("a real user decision marks the action APPROVED and audits who decided, for an MCP-originated action too", async () => {
+    prisma.aiPendingAction.findFirst.mockResolvedValue({
+      id: "pa1",
+      status: AiPendingActionStatus.PENDING,
+      toolName: "perform_action",
+      toolInput: { deviceId: "d1", action: "stop" },
+      classification: AiActionClassification.DESTRUCTIVE,
+      conversationId: null,
+    });
+
+    const result = await service.decide("env1", "pa1", "user:u1", true);
+
+    expect(result.toolName).toBe("perform_action");
+    expect(result.conversationId).toBeNull();
+    expect(prisma.aiPendingAction.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: AiPendingActionStatus.APPROVED, decidedBy: "user:u1" }) }),
+    );
+    expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: "ai.tool.perform_action.approved" }));
+  });
+
+  it("rejects deciding an already-decided action a second time", async () => {
+    prisma.aiPendingAction.findFirst.mockResolvedValue({
+      id: "pa1",
+      status: AiPendingActionStatus.APPROVED,
+      toolName: "perform_action",
+      toolInput: {},
+      classification: AiActionClassification.DESTRUCTIVE,
+      conversationId: "c1",
+    });
+    await expect(service.decide("env1", "pa1", "user:u1", true)).rejects.toThrow(BadRequestException);
+  });
+
+  it("throws NotFoundException for a pending action outside the environment", async () => {
+    prisma.aiPendingAction.findFirst.mockResolvedValue(null);
+    await expect(service.get("env1", "missing")).rejects.toThrow(NotFoundException);
+  });
+});

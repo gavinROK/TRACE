@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   Controls,
@@ -12,32 +12,48 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 
-import { orgData } from "@/lib/data";
 import { layoutTree, type Position } from "@/lib/layout";
 import { downloadJsonCanvas } from "@/lib/jsonCanvas";
 import { computeOrgStats } from "@/lib/stats";
 import { getChildrenByParentId, getVisibleEntities } from "@/lib/visibleEntities";
-import type { ActivityLevel, NodeKind } from "@/lib/types";
+import type { ActivityLevel, NodeKind, OrgEntity } from "@/lib/types";
+import { useGraphData } from "@/lib/useGraphData";
 import { EntityNode, type EntityNode as EntityNodeT } from "@/components/nodes/EntityNode";
 import { StatsRow } from "@/components/StatsRow";
 import { FilterBar } from "@/components/FilterBar";
 import { DetailPanel } from "@/components/DetailPanel";
+import { BackendStatusBadge } from "@/components/BackendStatusBadge";
+import { ConnectGithubModal } from "@/components/ConnectGithubModal";
+import { EnrollDeviceModal } from "@/components/EnrollDeviceModal";
 
 const nodeTypes = { entity: EntityNode };
 
-// Collapse every developer by default so the graph opens on the
-// org/department/developer shape, with GitHub/API/Security metrics
-// revealed on demand.
-const INITIALLY_COLLAPSED = new Set(
-  orgData.filter((entity) => entity.kind === "developer").map((entity) => entity.id),
-);
-
-const childrenByParentId = getChildrenByParentId(orgData);
-const entityById = new Map(orgData.map((entity) => [entity.id, entity]));
-const orgStats = computeOrgStats(orgData);
+function computeInitiallyCollapsed(entities: OrgEntity[]): Set<string> {
+  // Collapse every developer by default so the graph opens on the
+  // org/department/developer shape, with GitHub/API/Security metrics
+  // revealed on demand. Also collapse the devices group by default —
+  // found during a 50-person-scale product evaluation that a real
+  // inventory can easily have 50+ devices, and dumping every one of
+  // them into view on first load (unlike a handful of departments,
+  // which stay readable even at that scale) made the graph unreadable
+  // before the admin had done anything. Departments stay expanded by
+  // default, matching the existing demo experience.
+  return new Set(
+    entities
+      .filter((entity) => entity.kind === "developer" || entity.kind === "deviceGroup")
+      .map((entity) => entity.id),
+  );
+}
 
 function OrgGraphInner() {
-  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(INITIALLY_COLLAPSED);
+  const { entities, mode, organizationName, developerCount, refetch } = useGraphData();
+
+  const initiallyCollapsed = useMemo(() => computeInitiallyCollapsed(entities), [entities]);
+  const childrenByParentId = useMemo(() => getChildrenByParentId(entities), [entities]);
+  const entityById = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
+  const orgStats = useMemo(() => computeOrgStats(entities), [entities]);
+
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => computeInitiallyCollapsed(entities));
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activityFilter, setActivityFilter] = useState<ActivityLevel | "all">("all");
   const [hiddenMetricKinds, setHiddenMetricKinds] = useState<Set<NodeKind>>(new Set());
@@ -45,6 +61,33 @@ function OrgGraphInner() {
   // Positions the user has dragged a node to, keyed by node id. These take
   // priority over the computed tree layout until the next full re-layout.
   const [positionOverrides, setPositionOverrides] = useState<Map<string, Position>>(new Map());
+
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState(false);
+  const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
+
+  const developerOptions = useMemo(
+    () =>
+      entities
+        .filter((entity): entity is OrgEntity & { kind: "developer" } => entity.kind === "developer")
+        .map((developer) => ({ id: developer.id, name: developer.label })),
+    [entities],
+  );
+
+  // Reset per-node UI state only when `mode` itself transitions (demo ->
+  // live, on the initial load succeeding or failing) — not on every
+  // refetch within the same mode. A refetch after, say, resolving a
+  // security alert keeps the same organization and mostly the same ids;
+  // resetting selectedId there would yank the very panel the user just
+  // used to make that change out from under them. Skips the initial
+  // mount, since local state already matches the starting entities.
+  const previousMode = useRef(mode);
+  useEffect(() => {
+    if (previousMode.current === mode) return;
+    previousMode.current = mode;
+    setCollapsedIds(initiallyCollapsed);
+    setSelectedId(null);
+    setPositionOverrides(new Map());
+  }, [mode, initiallyCollapsed]);
 
   const toggleCollapse = useCallback((id: string) => {
     setCollapsedIds((prev) => {
@@ -65,8 +108,8 @@ function OrgGraphInner() {
   }, []);
 
   const visibleEntities = useMemo(
-    () => getVisibleEntities(orgData, { collapsedIds, activityFilter, hiddenMetricKinds }),
-    [collapsedIds, activityFilter, hiddenMetricKinds],
+    () => getVisibleEntities(entities, { collapsedIds, activityFilter, hiddenMetricKinds }),
+    [entities, collapsedIds, activityFilter, hiddenMetricKinds],
   );
 
   const nodes = useMemo<EntityNodeT[]>(() => {
@@ -84,7 +127,7 @@ function OrgGraphInner() {
         onSelect: setSelectedId,
       },
     }));
-  }, [visibleEntities, positionOverrides, collapsedIds, selectedId, toggleCollapse]);
+  }, [visibleEntities, positionOverrides, collapsedIds, selectedId, toggleCollapse, childrenByParentId]);
 
   const edges = useMemo<Edge[]>(
     () =>
@@ -116,7 +159,7 @@ function OrgGraphInner() {
   const selectedEntity = selectedId ? entityById.get(selectedId) ?? null : null;
   const selectedChildren = useMemo(
     () => (selectedId ? childrenByParentId.get(selectedId) ?? [] : []),
-    [selectedId],
+    [selectedId, childrenByParentId],
   );
 
   const currentPositions = useMemo(
@@ -130,6 +173,7 @@ function OrgGraphInner() {
         <span className="h-2 w-2 rounded-full bg-cyan-400" />
         <h1 className="text-sm font-semibold tracking-wide text-slate-100">TRACE</h1>
         <span className="text-xs text-slate-500">Developer &amp; Security Intelligence</span>
+        <BackendStatusBadge mode={mode} organizationName={organizationName} developerCount={developerCount} />
       </header>
 
       <StatsRow stats={orgStats} />
@@ -140,12 +184,39 @@ function OrgGraphInner() {
         hiddenMetricKinds={hiddenMetricKinds}
         onToggleMetricKind={toggleMetricKind}
         onExpandAll={() => setCollapsedIds(new Set())}
-        onCollapseAll={() => setCollapsedIds(INITIALLY_COLLAPSED)}
-        onExportJsonCanvas={() => downloadJsonCanvas(orgData, currentPositions)}
+        onCollapseAll={() => setCollapsedIds(initiallyCollapsed)}
+        onExportJsonCanvas={() => downloadJsonCanvas(entities, currentPositions)}
+        onConnectGithub={mode === "live" ? () => setIsConnectModalOpen(true) : undefined}
+        onEnrollDevice={mode === "live" ? () => setIsEnrollModalOpen(true) : undefined}
       />
+
+      {isConnectModalOpen && (
+        <ConnectGithubModal
+          onClose={() => setIsConnectModalOpen(false)}
+          onSynced={refetch}
+        />
+      )}
+
+      {isEnrollModalOpen && (
+        <EnrollDeviceModal
+          developers={developerOptions}
+          onClose={() => setIsEnrollModalOpen(false)}
+          onEnrolled={refetch}
+        />
+      )}
 
       <div className="relative flex-1">
         <ReactFlow
+          // Remounts on a mode transition (checking -> live/demo) so
+          // `fitView` below runs again against the new data's actual
+          // layout. `fitView` only fits once, on mount — found during a
+          // product evaluation at realistic (50-person) scale: without
+          // this key, the viewport stayed wherever it fit the tiny
+          // synchronous demo tree, then live data swapped in at a much
+          // larger size with the camera never moving, landing the admin
+          // on an arbitrary, disconnected-looking fragment of the org
+          // with no visible root on first load.
+          key={mode}
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
@@ -169,7 +240,10 @@ function OrgGraphInner() {
           <DetailPanel
             entity={selectedEntity}
             childEntities={selectedChildren}
+            mode={mode}
             onClose={() => setSelectedId(null)}
+            onDataChanged={refetch}
+            onSelectEntity={setSelectedId}
           />
         )}
       </div>

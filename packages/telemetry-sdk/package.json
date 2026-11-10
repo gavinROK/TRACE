@@ -1,0 +1,23 @@
+{
+  "name": "@trace/telemetry-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal client for reporting API usage metadata to a TRACE backend. Zero runtime dependencies — uses the global fetch available in Node 18+ and browsers.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "lint": "eslint \"src/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20",
+    "eslint": "^9",
+    "jest": "^30.5.2",
+    "ts-jest": "^29.4.15",
+    "typescript": "^5",
+    "typescript-eslint": "^8.71.2"
+  }
+}

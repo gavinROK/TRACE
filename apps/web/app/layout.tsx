@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "TRACE",
-  description: "Developer and security intelligence org graph",
+  description: "Unified infrastructure management and developer intelligence",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

@@ -1,11 +1,12 @@
 "use client";
 
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import type { ActivityLevel, OrgEntity } from "@/lib/types";
+import type { ActivityLevel, DevicePostureStatus, OrgEntity } from "@/lib/types";
 import {
   ApiUsageIcon,
   ChevronIcon,
   DepartmentIcon,
+  DeviceIcon,
   GithubIcon,
   OrganizationIcon,
   SecurityIcon,
@@ -35,14 +36,28 @@ const SEVERITY_TEXT: Record<ActivityLevel, string> = {
   low: "text-slate-400",
 };
 
+const POSTURE_TEXT: Record<DevicePostureStatus, string> = {
+  HEALTHY: "text-emerald-400",
+  AT_RISK: "text-amber-400",
+  CRITICAL: "text-rose-400",
+  UNKNOWN: "text-slate-500",
+};
+
 export function EntityNode({ data }: NodeProps<EntityNode>) {
   const { entity, canExpand, isCollapsed, isSelected, onToggleCollapse, onSelect } = data;
 
   const isLeafMetric =
-    entity.kind === "github" || entity.kind === "apiUsage" || entity.kind === "security";
+    entity.kind === "github" ||
+    entity.kind === "apiUsage" ||
+    entity.kind === "security" ||
+    entity.kind === "repository" ||
+    entity.kind === "apiUsageDashboard" ||
+    entity.kind === "securityAlertsGroup" ||
+    entity.kind === "device";
 
   return (
     <div
+      data-testid={`node-${entity.id}`}
       className={`group w-[220px] rounded-lg border px-3 py-2.5 shadow-lg backdrop-blur-sm transition-colors cursor-pointer ${
         isSelected
           ? "border-cyan-400 bg-slate-800/90 ring-1 ring-cyan-400/50"
@@ -67,6 +82,7 @@ export function EntityNode({ data }: NodeProps<EntityNode>) {
           <button
             type="button"
             aria-label={isCollapsed ? "Expand" : "Collapse"}
+            data-testid={`node-toggle-${entity.id}`}
             onClick={(event) => {
               event.stopPropagation();
               onToggleCollapse(entity.id);
@@ -104,6 +120,18 @@ function NodeIcon({ entity }: { entity: OrgEntity }) {
       return <ApiUsageIcon className={className} />;
     case "security":
       return <SecurityIcon className={className} />;
+    case "repositoryGroup":
+      return <DepartmentIcon className={className} />;
+    case "repository":
+      return <GithubIcon className={className} />;
+    case "apiUsageDashboard":
+      return <ApiUsageIcon className={className} />;
+    case "securityAlertsGroup":
+      return <SecurityIcon className={className} />;
+    case "deviceGroup":
+      return <DepartmentIcon className={className} />;
+    case "device":
+      return <DeviceIcon className={className} />;
   }
 }
 
@@ -116,8 +144,24 @@ function NodeSubtitle({ entity }: { entity: OrgEntity }) {
       </div>
     );
   }
-  if (entity.kind === "organization" || entity.kind === "department") {
+  if (
+    entity.kind === "organization" ||
+    entity.kind === "department" ||
+    entity.kind === "repositoryGroup" ||
+    entity.kind === "deviceGroup"
+  ) {
     return <div className="truncate text-xs text-slate-400">{entity.description}</div>;
+  }
+  if (entity.kind === "repository") {
+    return <div className="truncate text-xs text-slate-400">{entity.fullName}</div>;
+  }
+  if (entity.kind === "device") {
+    const assignedTo = entity.ownerName ?? entity.departmentName ?? "Unassigned";
+    return (
+      <div className="truncate text-xs text-slate-400">
+        {entity.operatingSystem} {entity.osVersion} · {assignedTo}
+      </div>
+    );
   }
   return null;
 }
@@ -149,6 +193,34 @@ function NodeMetrics({ entity }: { entity: OrgEntity }) {
       return (
         <div className={`mt-2 text-xs font-medium ${SEVERITY_TEXT[entity.severity]}`}>
           {entity.openAlerts} open alert{entity.openAlerts === 1 ? "" : "s"}
+        </div>
+      );
+    case "repository":
+      return (
+        <div className="mt-2 flex gap-3 text-xs text-slate-400">
+          <span>{entity.commitCount} commits</span>
+          <span>{entity.openPullRequestCount} open PRs</span>
+        </div>
+      );
+    case "apiUsageDashboard":
+      return (
+        <div className="mt-2 flex gap-3 text-xs text-slate-400">
+          <span>{entity.requestCount.toLocaleString()} requests</span>
+          <span>{entity.providerCount} providers</span>
+        </div>
+      );
+    case "securityAlertsGroup":
+      return (
+        <div
+          className={`mt-2 text-xs font-medium ${entity.openCount > 0 ? "text-rose-400" : "text-slate-400"}`}
+        >
+          {entity.openCount} open alert{entity.openCount === 1 ? "" : "s"}
+        </div>
+      );
+    case "device":
+      return (
+        <div className={`mt-2 text-xs font-medium ${POSTURE_TEXT[entity.posture.status]}`}>
+          {entity.posture.status === "UNKNOWN" ? "Posture unknown" : entity.posture.status.replace("_", " ")}
         </div>
       );
     default:
