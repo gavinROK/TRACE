@@ -4,6 +4,15 @@ import { TraceClient, TraceClientError } from "./trace-client";
 
 type ToolResult = { content: [{ type: "text"; text: string }] };
 
+interface DeviceSummary {
+  id: string;
+  name: string;
+  enrollmentStatus: string;
+  onlineState: string;
+  lastContactAt: string | null;
+  parentDevice: { id: string; name: string } | null;
+}
+
 /**
  * `server.tool(...)`'s real type is a heavily-overloaded generic
  * (`InputArgs`/`OutputArgs` conditional on `ZodRawShapeCompat |
@@ -104,7 +113,7 @@ export function createServer(client: TraceClient): McpServer {
 
   registerTool(
     "trace_execute_command",
-    "Run a shell command on one device over SSH. Requires the device to have an SSH credential enrolled.",
+    "Propose running a shell command on one device over SSH. This never executes immediately — it creates a pending action that a human must approve in TRACE's own dashboard (Settings → Pending approvals) before it runs. The result includes a pendingActionId; call trace_get_pending_action_status with it to check whether a human has approved/rejected it yet and, once executed, see the real result.",
     {
       environmentId: z.string(),
       deviceName: z.string(),
@@ -121,7 +130,7 @@ export function createServer(client: TraceClient): McpServer {
 
   registerTool(
     "trace_execute_group_command",
-    "Run a shell command across multiple devices with bounded concurrency. Running against more than one device requires confirm: true.",
+    "Propose running a shell command across multiple devices. Like trace_execute_command, this never executes immediately — it creates one pending action a human must approve in TRACE's dashboard before it runs against any device; `confirm` has no effect on that gate. Use trace_get_pending_action_status to check the outcome.",
     {
       environmentId: z.string(),
       deviceNames: z.array(z.string()),
@@ -145,7 +154,7 @@ export function createServer(client: TraceClient): McpServer {
 
   registerTool(
     "trace_perform_action",
-    "Perform a management action on a device (e.g. start/stop/reboot a Proxmox VM). Destructive actions (stop, shutdown, reboot) require confirm: true.",
+    "Propose a management action on a device (e.g. start/stop/reboot a Proxmox VM). This never executes immediately — it creates a pending action (ADMINISTRATIVE for start, DESTRUCTIVE for stop/shutdown/reboot) a human must approve in TRACE's dashboard before it runs; `confirm` has no effect on that gate. Use trace_get_pending_action_status to check the outcome.",
     {
       environmentId: z.string(),
       deviceId: z.string(),
@@ -225,6 +234,53 @@ export function createServer(client: TraceClient): McpServer {
     },
     async ({ environmentId, deviceId, ...patch }) =>
       jsonResult(await guarded(() => client.updateDevice(environmentId as string, deviceId as string, patch))),
+  );
+
+  registerTool(
+    "trace_get_pending_action_status",
+    "Check whether a pending action (from trace_execute_command, trace_execute_group_command, or trace_perform_action) has been approved, rejected, or is still awaiting a human in TRACE's dashboard. Read-only — this cannot approve anything itself.",
+    { environmentId: z.string(), pendingActionId: z.string() },
+    async ({ environmentId, pendingActionId }) =>
+      jsonResult(await guarded(() => client.getPendingActionStatus(environmentId as string, pendingActionId as string))),
+  );
+
+  registerTool(
+    "trace_list_unenrolled_devices",
+    "List devices TRACE has discovered but that are not yet enrolled (no working credential/connection verified yet).",
+    { environmentId: z.string() },
+    async ({ environmentId }) => {
+      const devices = await guarded(() => client.listDevices(environmentId as string)) as DeviceSummary[];
+      return jsonResult(devices.filter((d) => d.enrollmentStatus === "DISCOVERED"));
+    },
+  );
+
+  registerTool(
+    "trace_get_vm_inventory",
+    "List the VMs/containers hosted on a given hypervisor device (its children in TRACE's inventory). Pure read of already-known inventory — does not trigger a new discovery scan; call trace_scan_network or the TRACE UI's Discover flow for that.",
+    { environmentId: z.string(), hypervisorDeviceId: z.string() },
+    async ({ environmentId, hypervisorDeviceId }) => {
+      const devices = await guarded(() => client.listDevices(environmentId as string)) as DeviceSummary[];
+      return jsonResult(devices.filter((d) => d.parentDevice?.id === hypervisorDeviceId));
+    },
+  );
+
+  registerTool(
+    "trace_list_alerts",
+    "List active alerts. Honest about a real gap: TRACE's infrastructure control plane has no threshold-based alerting/notification engine yet — this reports that limitation plainly, plus the closest available signals (devices currently OFFLINE and the recent audit log), instead of inventing alerts that don't exist.",
+    { environmentId: z.string() },
+    async ({ environmentId }) => {
+      const [devices, auditLog] = await Promise.all([
+        guarded(() => client.listDevices(environmentId as string)) as Promise<DeviceSummary[]>,
+        guarded(() => client.getLogs(environmentId as string, 20)),
+      ]);
+      return jsonResult({
+        alertingImplemented: false,
+        limitation:
+          "TRACE's infrastructure control plane does not have a threshold-based alerting/notification engine yet. The closest available signals are: devices currently reported OFFLINE, and the recent audit log.",
+        devicesCurrentlyOffline: devices.filter((d) => d.onlineState === "OFFLINE").map((d) => ({ id: d.id, name: d.name, lastContactAt: d.lastContactAt })),
+        recentAuditLog: auditLog,
+      });
+    },
   );
 
   return server;

@@ -21,7 +21,7 @@ describe("AiChatService", () => {
     getWithMessages: jest.fn().mockResolvedValue({ messages: [], deviceContextId: null, deviceContextName: null }),
   };
   const tools = { run: jest.fn() };
-  const approvals = { create: jest.fn() };
+  const approvals = { create: jest.fn(), decide: jest.fn(), recordResult: jest.fn() };
 
   const service = new AiChatService(settings as never, provider as never, conversations as never, tools as never, approvals as never);
 
@@ -143,5 +143,38 @@ describe("AiChatService", () => {
 
     expect(events).toEqual(expect.arrayContaining([{ type: "error", message: "rate limited", retryable: true }]));
     expect(events.at(-1)).toMatchObject({ type: "done" });
+  });
+
+  describe("resolveApproval", () => {
+    it("executes the approved tool via the shared registry and records the result", async () => {
+      approvals.decide.mockResolvedValue({ toolName: "perform_action", toolInput: { deviceId: "d1", action: "stop" }, conversationId: "c1" });
+      tools.run.mockResolvedValue({ success: true });
+
+      const result = await service.resolveApproval("env1", "pa1", "user:u1", true);
+
+      expect(approvals.decide).toHaveBeenCalledWith("env1", "pa1", "user:u1", true);
+      expect(tools.run).toHaveBeenCalledWith("perform_action", { deviceId: "d1", action: "stop" }, { environmentId: "env1", actor: "user:u1" });
+      expect(approvals.recordResult).toHaveBeenCalledWith("pa1", { output: { success: true }, isError: false });
+      expect(result).toEqual({ status: "executed", output: { success: true }, isError: false });
+    });
+
+    it("does not execute anything on rejection", async () => {
+      approvals.decide.mockResolvedValue({ toolName: "execute_command", toolInput: {}, conversationId: "c1" });
+
+      const result = await service.resolveApproval("env1", "pa1", "user:u1", false);
+
+      expect(tools.run).not.toHaveBeenCalled();
+      expect(result).toEqual({ status: "rejected" });
+    });
+
+    it("works for an MCP-originated pending action with no conversation to append a message to", async () => {
+      approvals.decide.mockResolvedValue({ toolName: "perform_action", toolInput: { deviceId: "d1", action: "start" }, conversationId: null });
+      tools.run.mockResolvedValue({ success: true });
+
+      const result = await service.resolveApproval("env1", "pa1", "user:u1", true);
+
+      expect(result).toEqual({ status: "executed", output: { success: true }, isError: false });
+      expect(conversations.appendMessage).not.toHaveBeenCalled();
+    });
   });
 });

@@ -1,6 +1,7 @@
 import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import type { Request } from "express";
 import { parseCookieHeader } from "./cookie.util";
+import { MCP_ACTOR } from "./mcp-actor";
 import { TraceAuthService } from "./trace-auth.service";
 
 export const SESSION_COOKIE_NAME = "trace_session";
@@ -47,7 +48,7 @@ export class TraceAccessGuard implements CanActivate {
           `TRACE_MCP_READ_ONLY is enabled — the MCP service token cannot make a ${request.method} request right now. Unset TRACE_MCP_READ_ONLY in apps/api/.env once you want Claude to execute commands/actions through TRACE.`,
         );
       }
-      request.actor = "claude-mcp";
+      request.actor = MCP_ACTOR;
       return true;
     }
 

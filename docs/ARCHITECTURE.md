@@ -32,7 +32,9 @@ control plane" section comment for the full data model.
 | `topology` | Assembles the graph (nodes + verified/inferred edges) the frontend renders. |
 | `audit` | The security/audit trail — every credential change, command, and action. |
 | `auth` | Password + WebAuthn login, cookie sessions, and the combined guard the MCP service token also goes through. |
-| `ai` | The native AI assistant (TRACE v0.3) — see "Native AI assistant" below. |
+| `ai` | The native AI assistant (TRACE v0.3) — see "Two AI integration surfaces" below. |
+| `approvals` | `AiPendingAction` — the one approval queue both AI surfaces share (TRACE v0.4). |
+| `mcp` | Read-only MCP connection status for the Settings page — never the service token's value. |
 
 Every one of these is a real NestJS module with its own controller,
 service, and Jest tests — not a stub. `src/infra/infra.module.ts` wires
@@ -68,18 +70,36 @@ single enforcement point for "don't show a control that isn't real."
   verified against the real device before a connector is written — see
   "Known limitations" below.
 
-## Native AI assistant (`apps/api/src/infra/ai`, `apps/web/components/ai`)
+## Two AI integration surfaces
 
-A consumer of the modules above, not a second implementation of them —
-every tool the assistant can call (`ai-tools.registry.ts`) dispatches to
-the same `EnvironmentsService`/`InfraDevicesService`/`DevicePollingService`/
+TRACE supports two independent ways to drive it with AI — "independent"
+meaning either can be absent with the other fully functional, and both
+are consumers of the same backend services, never a second
+implementation of them:
+
+1. **Native AI assistant** (`apps/api/src/infra/ai`,
+   `apps/web/components/ai`) — optional, requires the operator's own
+   Anthropic API key (Settings → Native AI assistant). A chat panel
+   built into the browser UI.
+2. **MCP integration** (`packages/mcp-server`, plus the gating this
+   phase added to `ConsoleController`/`ActionsController`) — primary,
+   no Anthropic API key needed at all. Lets an already-running Claude
+   Code or Claude Desktop connect to TRACE directly, using whichever
+   Claude subscription that client already has.
+
+Both share the same tool-execution reality: every capability either
+surface exposes dispatches to the exact same
+`EnvironmentsService`/`InfraDevicesService`/`DevicePollingService`/
 `TopologyService`/`CommandExecutionService`/`ActionsService`/
-`DiscoveryScanService` methods the browser UI and `packages/mcp-server`
-already use — no second Proxmox/SSH/SNMP client exists anywhere in this
-module. It is also a deliberately separate integration surface from the
-MCP server, not layered on top of it: `AiController` refuses the MCP
-service-token actor (`claude-mcp`) on every route, since this assistant
-is for using TRACE directly in the browser, without opening Claude Code.
+`DiscoveryScanService` methods the browser console itself calls — no
+second Proxmox/SSH/SNMP client exists anywhere in either integration.
+They are deliberately kept as two separate call paths rather than one
+layered on the other: `AiController` refuses the MCP service-token actor
+(`claude-mcp`) on every one of its routes, and nothing in
+`packages/mcp-server` calls into `apps/api/src/infra/ai` — each surface
+can be removed independently without the other noticing.
+
+### Native AI assistant
 
 - **Providers** (`ai/providers`) — `AiProvider` is the only interface
   `ai-chat.service.ts` and the tool registry know about; `AnthropicProviderService`
@@ -91,22 +111,15 @@ is for using TRACE directly in the browser, without opening Claude Code.
   `perform_action`'s classification is computed from its `action`
   argument against `ActionsService.DESTRUCTIVE_ACTIONS` (exported,
   imported — not a second list that could drift).
-- **Approval enforcement** (`ai-approval.service.ts`) — structural, not
-  a prompt instruction: creating an `AiPendingAction` happens inside the
-  model's own tool-call loop; deciding one (`approve`/`reject`) only
-  happens from `AiController`'s dedicated HTTP endpoints, reachable only
-  by a real browser-session request. The model's own output has no code
-  path that reaches the decide method — `AiApprovalService.decide` also
-  explicitly refuses a `claude-mcp`-prefixed decider as defense in depth.
 - **Conversation persistence** (`ai-conversations.service.ts`) —
   `AiConversation`/`AiMessage`/`AiPendingAction` in Postgres, scoped to
   `(environmentId, actor)`; every mutation checks ownership first.
-- **Secret redaction** (`secret-redaction.ts`) — applied to tool
-  inputs/outputs before they're persisted or fed back to the model, as
-  defense in depth. The primary control is structural: no tool handler
-  ever calls `CredentialsService.getDecryptedForDevice` or returns a
-  connector credential — every handler calls the same controller-
-  reachable service methods the REST API itself exposes.
+- **Secret redaction** (`secret-redaction.ts`, now shared — see below)
+  — applied to tool inputs/outputs before they're persisted or fed back
+  to the model, as defense in depth. The primary control is structural:
+  no tool handler ever calls `CredentialsService.getDecryptedForDevice`
+  or returns a connector credential — every handler calls the same
+  controller-reachable service methods the REST API itself exposes.
 - **Known, stated scope cut**: approving a pending action executes it
   and persists the result as its own `TOOL`-role message, but does not
   resume the paused Anthropic tool-use turn so the model can narrate the
@@ -121,6 +134,68 @@ is for using TRACE directly in the browser, without opening Claude Code.
   inline code, bold/italic, links, lists, headers) rather than a
   `react-markdown` dependency — `apps/web` has no Markdown dependency
   today and the assistant's responses don't need tables/images/footnotes.
+
+### MCP integration (TRACE v0.4)
+
+`packages/mcp-server` is a thin MCP server (stdio transport only — no
+HTTP/SSE listener, so no new network attack surface) exposing 20 tools
+to any MCP client; see that package's own README for the full list and
+setup (Claude Code and Claude Desktop both use the identical
+command/args/env shape). It authenticates to TRACE's API with a fixed
+bearer token (`TRACE_MCP_SERVICE_TOKEN`), set once in `apps/api/.env` —
+unrelated to, and never billed against, any Anthropic API key.
+`TraceAccessGuard` assigns the `claude-mcp` actor to any request bearing
+that token (see `auth/mcp-actor.ts`), never to a browser session.
+
+**Administrative/destructive operations cannot bypass approval through
+MCP.** Before this phase, `trace_execute_command`/
+`trace_execute_group_command`/`trace_perform_action` passed a client-
+supplied `confirm` flag straight through to the backend, which executed
+immediately if it was `true` — meaning an external MCP client (not a
+human looking at TRACE's own UI) could self-authorize a destructive
+action, inconsistent with the native assistant's own stronger,
+structural approval gate. Now, `ConsoleController.exec`/`execGroup` and
+`ActionsController.perform` check the caller's actor first: for
+`claude-mcp`, they ignore `confirm` and instead call
+`ApprovalsService.create` (same service, same `AiPendingAction` table,
+same Settings → Pending approvals queue the native assistant's own
+gated tool calls land in) and return
+`{ pending: true, pendingActionId, classification, message }` instead
+of executing. A real browser session's own calls to these same
+endpoints are completely unaffected — the check is purely on `req.actor`.
+
+- **`approvals/approvals.service.ts`** (moved out of `ai/`, this
+  phase) — the shared enforcement point for "an AI surface can propose
+  a gated action but never approve its own": `create` is called from
+  the native assistant's tool-call loop *and* from the two MCP-actor
+  gates above; `decide` is called from exactly one place,
+  `AiController`'s `approve`/`reject` endpoints, which require a real
+  browser-session request and additionally refuse a
+  `claude-mcp`-prefixed decider as defense in depth. `AiPendingAction
+  .conversationId` is nullable (migration `20261110141325_mcp_shared_approvals`)
+  specifically so an MCP-proposed action — which has no chat
+  conversation — can still use this exact same table and queue.
+- **Read-only exception**: `GET .../ai/pending-actions/:id` (check one
+  action's status) is the one AI-related route *not* restricted to a
+  browser session — an MCP client needs to ask "is my proposed action
+  done yet?" (`trace_get_pending_action_status`), which discloses
+  nothing it couldn't already see and cannot approve anything.
+- **Settings UI** (`apps/web/components/mcp/McpSettingsPanel.tsx`) —
+  connection instructions and copy-paste `claude mcp add`/Claude Desktop
+  config snippets, plus a live status check
+  (`GET /infra/mcp/status`, `mcp-status.controller.ts`) that reports
+  only whether `TRACE_MCP_SERVICE_TOKEN` is set and whether
+  `TRACE_MCP_READ_ONLY` is on — never the token's value. There is
+  deliberately no "generate/rotate the token from the browser" flow;
+  it stays a `.env` value, consistent with every other secret in this
+  app never round-tripping through the browser.
+- **Pending-approvals UI**
+  (`apps/web/components/ai/PendingApprovalsPanel.tsx`) — lists every
+  `PENDING` `AiPendingAction` in the environment regardless of which
+  surface proposed it, reusing `ApprovalCard` and the exact same
+  approve/reject endpoints the chat panel uses. This is the one place
+  a human sees and decides an MCP-proposed action, which — unlike a
+  chat message — has no conversation to render an inline card inside.
 
 ## Security model
 
@@ -293,7 +368,7 @@ is for using TRACE directly in the browser, without opening Claude Code.
   token → 403 with the expected message), but no real `sk-ant-...` key
   has been entered into Settings and used to hold an actual streamed
   conversation here. Do that once before relying on it.
-- **Secret redaction in `ai/secret-redaction.ts` is pattern-based
+- **Secret redaction in `secret-redaction.ts` is pattern-based
   defense in depth, not the primary control** — see that file's own
   header comment. It will not catch every possible secret shape; the
   real guarantee is structural (no AI tool handler ever receives a
@@ -303,3 +378,23 @@ is for using TRACE directly in the browser, without opening Claude Code.
   options are used as-is; a 429 that outlives the SDK's own retries
   surfaces to the user as a plain error with `retryable: true`, with no
   additional backoff loop in TRACE's own code.
+- **The MCP approval gate (TRACE v0.4) has not been exercised with a
+  real Claude Code or Claude Desktop process issuing the destructive
+  call** — the gate itself (controller-level actor check →
+  `AiPendingAction` row → browser-only approve/reject) is covered by
+  unit tests and a live, un-mocked HTTP check of the surrounding
+  authorization boundaries (401/403s, the pre-existing
+  `TRACE_MCP_READ_ONLY` block still working), but the full "MCP client
+  proposes → human approves in the UI → it actually runs" path was not
+  run end to end against a live, non-read-only backend in this
+  environment, and no real Claude Code/Desktop session has exercised
+  any of the 4 tools added this phase. See `packages/mcp-server/README.md`'s
+  "What's verified vs. what isn't" for the precise split.
+- **No token rotation/generation UI** — `TRACE_MCP_SERVICE_TOKEN` stays
+  a `.env` value, set via `openssl rand -base64 32` and a server
+  restart, same as before this phase. The Settings page's MCP panel
+  shows setup instructions and a configured/not-configured status, not
+  a "click to generate" flow — deliberately, since that would mean
+  either returning the token to the browser once or storing it
+  somewhere other than the environment `TraceAccessGuard` already
+  trusts.

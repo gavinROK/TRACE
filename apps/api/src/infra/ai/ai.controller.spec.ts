@@ -18,7 +18,7 @@ describe("AiController — authentication/authorization", () => {
   const settings = { getStatus: jest.fn(), listAvailableModels: jest.fn(), saveApiKey: jest.fn(), clearApiKey: jest.fn(), setSelectedModel: jest.fn() };
   const chat = { sendMessage: jest.fn(), resolveApproval: jest.fn() };
   const conversations = { start: jest.fn(), list: jest.fn(), getWithMessages: jest.fn(), rename: jest.fn(), remove: jest.fn(), assertOwned: jest.fn() };
-  const approvals = { listPendingForConversation: jest.fn() };
+  const approvals = { listPendingForConversation: jest.fn(), listPendingForEnvironment: jest.fn() };
   const controller = new AiController(settings as never, chat as never, conversations as never, approvals as never);
 
   beforeEach(() => jest.clearAllMocks());
@@ -42,6 +42,18 @@ describe("AiController — authentication/authorization", () => {
   it("blocks the MCP service-token actor from approving a pending action", async () => {
     await expect(controller.approve(fakeReq("claude-mcp"), "env1", "pa1")).rejects.toThrow(ForbiddenException);
     expect(chat.resolveApproval).not.toHaveBeenCalled();
+  });
+
+  it("blocks the MCP service-token actor from listing the environment-wide pending-approval queue", async () => {
+    await expect(controller.listAllPendingActions(fakeReq("claude-mcp"), "env1")).rejects.toThrow(ForbiddenException);
+    expect(approvals.listPendingForEnvironment).not.toHaveBeenCalled();
+  });
+
+  it("a real user can list every pending action in the environment, regardless of which AI surface proposed it", async () => {
+    approvals.listPendingForEnvironment.mockResolvedValue([{ id: "pa1" }]);
+    const result = await controller.listAllPendingActions(fakeReq("user:u1"), "env1");
+    expect(approvals.listPendingForEnvironment).toHaveBeenCalledWith("env1");
+    expect(result).toEqual([{ id: "pa1" }]);
   });
 
   it("allows a real browser-session actor through to the underlying service", async () => {

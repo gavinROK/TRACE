@@ -331,7 +331,7 @@ export class AiToolsRegistryService {
       const deviceId = requireString(input, "deviceId");
       const action = requireString(input, "action");
       const params = (input.params as Record<string, unknown> | undefined) ?? undefined;
-      // Already approved by the time `run` is called (see ai-approval.service.ts) —
+      // Already approved by the time `run` is called (see approvals/approvals.service.ts) —
       // confirmed:true here reflects that human approval, not model self-approval.
       return this.actionsService.performAction(ctx.environmentId, ctx.actor, deviceId, action, params, true);
     },

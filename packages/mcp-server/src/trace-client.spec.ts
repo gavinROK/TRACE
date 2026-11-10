@@ -35,4 +35,15 @@ describe("TraceClient", () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(JSON.parse(init.body)).toEqual({ deviceNames: ["a", "b"], command: "uptime", timeoutMs: 5000, confirm: true });
   });
+
+  it("checks a pending action's status via a GET to the shared pending-actions endpoint", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ status: "APPROVED" }) });
+
+    await client.getPendingActionStatus("env1", "pa1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/infra/environments/env1/ai/pending-actions/pa1",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer secret-token" }) }),
+    );
+  });
 });

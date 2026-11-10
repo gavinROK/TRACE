@@ -2,31 +2,44 @@ import { BadRequestException, ForbiddenException, Injectable, NotFoundException 
 import { AiActionClassification, AiPendingActionStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
-import { redactSecretsDeep } from "./secret-redaction";
+import { isMcpActor } from "../auth/mcp-actor";
+import { redactSecretsDeep } from "../secret-redaction";
 
 /**
- * Owns AiPendingAction — the hard enforcement point for PRODUCT_SPEC
- * v0.3 section 5: "The AI must never be able to approve its own
- * pending actions." That guarantee is structural, not a prompt
- * instruction: `create` is only ever called from inside the tool-call
- * loop in ai-chat.service.ts (model output can request a tool call, but
- * nothing in that loop ever calls `decide`); `decide` is only ever
- * called from AiController's POST
- * .../ai/pending-actions/:id/(approve|reject) endpoint, which requires
- * a real authenticated HTTP request through TraceAccessGuard. The
- * model's own text output has no code path that reaches `decide` — it
- * is a different method on a different call stack, reachable only via
- * a browser session actor.
+ * Owns `AiPendingAction` — the hard enforcement point for "an AI
+ * surface must never be able to approve its own pending action"
+ * (originally PRODUCT_SPEC v0.3 section 5 for the native chat
+ * assistant; TRACE v0.4 extends the same guarantee to an external MCP
+ * client). That guarantee is structural, not a prompt instruction or a
+ * client-side convention:
+ *
+ * - `create` is called from two places only: the native assistant's
+ *   own tool-call loop (`ai/ai-chat.service.ts`, conversationId set),
+ *   and the MCP-actor gate in `ConsoleController`/`ActionsController`
+ *   (conversationId null, requestedBy "claude-mcp"). Neither caller
+ *   has any code path from there to `decide`.
+ * - `decide` is called from exactly one place: `AiController`'s POST
+ *   `.../ai/pending-actions/:id/(approve|reject)` endpoint, which
+ *   requires a real authenticated HTTP request through
+ *   `TraceAccessGuard` — and that guard only ever assigns the
+ *   `claude-mcp` actor from a request carrying the MCP bearer token,
+ *   never from a request this service or an AI tool-call loop
+ *   generates itself. `decide` additionally refuses a
+ *   `claude-mcp`-prefixed `decidedBy` outright, as defense in depth
+ *   against a future caller accidentally wiring that path.
+ *
+ * In short: an agent (native or MCP) can only ever *propose* a gated
+ * action; only a real browser-session HTTP request can approve one.
  */
 @Injectable()
-export class AiApprovalService {
+export class ApprovalsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLog: AuditLogService,
   ) {}
 
   async create(params: {
-    conversationId: string;
+    conversationId?: string;
     environmentId: string;
     toolName: string;
     toolInput: Record<string, unknown>;
@@ -50,7 +63,7 @@ export class AiApprovalService {
       targetType: "AiPendingAction",
       targetId: pending.id,
       outcome: "success",
-      detail: { classification: params.classification },
+      detail: { classification: params.classification, source: params.conversationId ? "chat" : "mcp" },
     });
     return pending;
   }
@@ -68,9 +81,21 @@ export class AiApprovalService {
     });
   }
 
+  /** Every pending action in the environment regardless of source
+   * (native chat conversation, or an external MCP client) — the single
+   * place a human can go to see and decide everything waiting on them,
+   * per TRACE v0.4's requirement that both AI surfaces share one
+   * consistent approval queue rather than two separate ones. */
+  async listPendingForEnvironment(environmentId: string) {
+    return this.prisma.aiPendingAction.findMany({
+      where: { environmentId, status: AiPendingActionStatus.PENDING },
+      orderBy: { createdAt: "asc" },
+    });
+  }
+
   /**
    * `decidedBy` must be a browser-session actor (`user:<id>`) — never
-   * the MCP service-token actor and never anything the assistant's own
+   * the MCP service-token actor and never anything an AI surface's own
    * turn could produce, since this method is reachable only from
    * AiController's dedicated approve/reject HTTP endpoints.
    */
@@ -79,16 +104,17 @@ export class AiApprovalService {
     pendingActionId: string,
     decidedBy: string,
     approve: boolean,
-  ): Promise<{ toolName: string; toolInput: Record<string, unknown>; conversationId: string }> {
+  ): Promise<{ toolName: string; toolInput: Record<string, unknown>; conversationId: string | null }> {
     const pending = await this.get(environmentId, pendingActionId);
     if (pending.status !== AiPendingActionStatus.PENDING) {
       throw new BadRequestException(`This action was already ${pending.status.toLowerCase()}`);
     }
-    if (decidedBy.startsWith("claude-mcp")) {
-      // Defense in depth: the AI chat endpoints never authenticate as
-      // this actor anyway (see ai.controller.ts's guard usage), but an
-      // explicit refusal here means this invariant survives even if a
-      // future route accidentally allowed it.
+    if (isMcpActor(decidedBy)) {
+      // Defense in depth: neither the AI chat endpoints nor an MCP
+      // request ever authenticate as a decider anyway (see
+      // ai.controller.ts's guard usage), but an explicit refusal here
+      // means this invariant survives even if a future route
+      // accidentally allowed it.
       throw new ForbiddenException("An AI/service identity cannot approve its own pending action");
     }
 

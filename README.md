@@ -7,9 +7,13 @@ TRACE is two products in one local-first, open-source monorepo:
    employee-endpoint devices as an interactive node graph.
 2. **Infrastructure control plane** — discovers, enrolls, monitors, and
    administers real infrastructure (servers, VMs, hypervisors, switches,
-   printers, …) through a unified device model, a command console, a
-   native AI chat assistant (your own Anthropic API key, configured in
-   Settings), and an MCP server so Claude Code can operate it too.
+   printers, …) through a unified device model, a command console, and
+   two independent AI integrations: an MCP server (the primary path —
+   Claude Code or Claude Desktop, your existing subscription, no
+   Anthropic API key) and an optional native chat assistant built into
+   the UI (your own Anthropic API key, configured in Settings).
+   Administrative/destructive actions from either one require your
+   explicit approval in TRACE's own UI before they run.
 
 They share a database connection and an HTTP server, nothing else — see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the two are kept
@@ -40,7 +44,7 @@ remains between what's live-verified and what's still only unit-tested.
 | SSH connector | Unit tests mocking `ssh2`'s `Client` | Not yet tested against a real SSH host in this repo's history — point it at a real Linux box to find out |
 | SNMP connector | Unit tests mocking `net-snmp` | Not yet tested against a real SNMPv3-capable device |
 | WebAuthn/YubiKey | Unit tests mocking `@simplewebauthn/server` (challenge/credential logic) | Not yet tested against a real browser + hardware security key |
-| MCP server | A real `@modelcontextprotocol/sdk` `Client` connects over the SDK's in-memory transport and calls tools end to end (`packages/mcp-server/src/server.integration.spec.ts`) | Not yet registered with an actual Claude Code CLI session |
+| MCP server (20 tools; stdio — Claude Code **and** Claude Desktop use the same command/args/env shape) | A real `@modelcontextprotocol/sdk` `Client` connects over the SDK's in-memory transport and calls tools end to end, including the approval-gated ones (`packages/mcp-server/src/server.integration.spec.ts`); a real `claude mcp add` registration was verified live against a real backend in an earlier session (16 tools, pre-dating the approval gate) | The approval gate and the 4 tools added since have not been exercised by a real Claude Code/Desktop conversation — see `packages/mcp-server/README.md`'s "What's verified vs. what isn't" |
 | NestJS dependency wiring | `infra.module.spec.ts` resolves the entire DI graph; **the compiled server was booted against a real database** and every route, including live Proxmox calls, worked | — |
 | Frontend (unified `/` dashboard) | `tsc --noEmit`, ESLint, and a production build (via webpack — see Troubleshooting) all pass; the dev server was booted and every route (`/`, `/dev-intel`, `/infra` redirect) confirmed to respond correctly | Not click-tested in an actual browser in this environment — no GUI access here; verify the click-through yourself |
 
@@ -174,10 +178,29 @@ see `docs/ARCHITECTURE.md` "Known limitations"). Pin a fingerprint
 explicitly via `hostKeyFingerprint` in the payload if you want that
 checked from the very first connection instead.
 
-## MCP configuration — **live-verified**: registered with a real Claude Code CLI, a real client called 4 tools against the real backend and real Beelink
+## MCP configuration
+
+TRACE's primary AI integration path — no Anthropic API key needed, works
+with your existing Claude Code or Claude Desktop. (TRACE's *native* chat
+assistant, in Settings, is the separate optional path that does need
+your own Anthropic API key — see "Two AI integration surfaces" in
+`docs/ARCHITECTURE.md` for how the two stay independent.) Administrative
+and destructive tool calls (`trace_execute_command`,
+`trace_execute_group_command`, `trace_perform_action`) never execute
+directly — they create a pending action you approve in TRACE's own UI
+(Settings → Pending approvals), the same gate the native assistant's own
+tool calls use.
+
+**Live-verified in an earlier session**: registered with a real Claude
+Code CLI, a real client called 4 tools against the real backend and
+real Beelink (16 tools, pre-dating the approval gate below). **Not
+re-verified against a real Claude Code/Desktop process since** — see
+`packages/mcp-server/README.md`'s "What's verified vs. what isn't" for
+exactly what has and hasn't been exercised live.
 
 See [`packages/mcp-server/README.md`](packages/mcp-server/README.md) for
-the full 16-tool list and setup steps. In short:
+the full 20-tool list and setup steps (Claude Code **and** Claude
+Desktop). In short:
 
 ```bash
 openssl rand -base64 32

@@ -3,7 +3,8 @@ import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
 import { AiProviderKind } from "@prisma/client";
 import type { Response } from "express";
 import { InfraAuthenticatedRequest, TraceAccessGuard } from "../auth/trace-access.guard";
-import { AiApprovalService } from "./ai-approval.service";
+import { isMcpActor } from "../auth/mcp-actor";
+import { ApprovalsService } from "../approvals/approvals.service";
 import { AiChatService } from "./ai-chat.service";
 import { AiConversationsService } from "./ai-conversations.service";
 import { AiSettingsService } from "./ai-settings.service";
@@ -23,7 +24,7 @@ export class AiController {
     private readonly settings: AiSettingsService,
     private readonly chat: AiChatService,
     private readonly conversations: AiConversationsService,
-    private readonly approvals: AiApprovalService,
+    private readonly approvals: ApprovalsService,
   ) {}
 
   @Get("ai/settings")
@@ -106,6 +107,34 @@ export class AiController {
     return this.approvals.listPendingForConversation(conversationId);
   }
 
+  /**
+   * Every pending action in the environment, from either AI surface —
+   * the one queue a human checks to find and decide an MCP client's
+   * proposed action, which (unlike a chat message) has no conversation
+   * to be "inside" of. See docs/ARCHITECTURE.md's "MCP integration"
+   * section.
+   */
+  @Get("environments/:environmentId/ai/pending-actions")
+  async listAllPendingActions(@Req() req: InfraAuthenticatedRequest, @Param("environmentId") environmentId: string) {
+    assertBrowserActor(req);
+    return this.approvals.listPendingForEnvironment(environmentId);
+  }
+
+  /**
+   * Deliberately NOT gated by `assertBrowserActor` — unlike every other
+   * route in this controller, an MCP client is allowed to call this
+   * one, because it is read-only and tells it nothing it couldn't
+   * already see elsewhere (its own proposed tool name/input, and
+   * whether a human has acted on it yet). This is how an external MCP
+   * client checks whether its own proposed action has been approved —
+   * it cannot approve it (see the approve/reject endpoints above, both
+   * still browser-only), only ask "is it done yet?".
+   */
+  @Get("environments/:environmentId/ai/pending-actions/:pendingActionId")
+  async getPendingAction(@Param("environmentId") environmentId: string, @Param("pendingActionId") pendingActionId: string) {
+    return this.approvals.get(environmentId, pendingActionId);
+  }
+
   @Delete("environments/:environmentId/ai/conversations/:conversationId")
   async deleteConversation(
     @Req() req: InfraAuthenticatedRequest,
@@ -165,9 +194,9 @@ export class AiController {
 
   /**
    * The only way an ADMINISTRATIVE/DESTRUCTIVE tool call this assistant
-   * proposed can ever actually run — see ai-approval.service.ts and
+   * proposed can ever actually run — see approvals/approvals.service.ts and
    * ai-chat.service.ts's resolveApproval. `assertBrowserActor` above
-   * already excludes the MCP service token; AiApprovalService.decide
+   * already excludes the MCP service token; ApprovalsService.decide
    * additionally refuses a "claude-mcp"-prefixed decider as defense in
    * depth, so this invariant holds even if this controller changes.
    */
@@ -198,7 +227,7 @@ export class AiController {
  * in this controller calls this first so that invariant holds even if
  * a route is added here later without remembering to check. */
 function assertBrowserActor(req: InfraAuthenticatedRequest): void {
-  if (req.actor === "claude-mcp") {
+  if (isMcpActor(req.actor)) {
     throw new ForbiddenException("The native AI assistant is a browser-session feature — the MCP service token cannot use it.");
   }
 }

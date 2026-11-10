@@ -782,19 +782,22 @@ enum AiPendingActionStatus {
   EXPIRED
 }
 
-/// An ADMINISTRATIVE or DESTRUCTIVE tool call the assistant proposed but
-/// did not execute. Created instead of executing the tool; only a
-/// separate, human-initiated HTTP call to
-/// POST .../ai/pending-actions/:id/approve (never something the model's
-/// own output can trigger — see ai-approval.service.ts) flips this to
-/// APPROVED and actually runs it. `requestedBy` is always the
-/// conversation's own actor (the assistant never acts as a different
-/// user); `decidedBy` must be a browser-session actor — the guard never
-/// assigns the MCP service-token actor to this endpoint.
+/// An ADMINISTRATIVE or DESTRUCTIVE tool call an AI surface proposed but
+/// did not execute — created by EITHER the native chat assistant's own
+/// tool-call loop (conversationId set) OR an external MCP client's
+/// request (TRACE v0.4: conversationId null, requestedBy "claude-mcp" —
+/// see apps/api/src/infra/approvals). Only a separate, human-initiated
+/// HTTP call to POST .../ai/pending-actions/:id/approve (never something
+/// a model's own output can trigger — see
+/// approvals/approvals.service.ts) flips this to APPROVED and actually
+/// runs it. `decidedBy` must be a browser-session actor — the guard
+/// never assigns the MCP service-token actor to that endpoint, and
+/// ApprovalsService.decide refuses a "claude-mcp"-prefixed decider as
+/// defense in depth, so neither AI surface can approve its own action.
 model AiPendingAction {
   id             String                  @id @default(cuid())
-  conversation   AiConversation          @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  conversationId String
+  conversation   AiConversation?         @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  conversationId String?
   environmentId  String
   toolName       String
   toolInput      Json
@@ -807,5 +810,6 @@ model AiPendingAction {
   createdAt      DateTime                @default(now())
 
   @@index([conversationId])
+  @@index([environmentId, status])
   @@map("ai_pending_actions")
 }

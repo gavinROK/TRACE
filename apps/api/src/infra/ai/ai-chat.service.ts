@@ -1,13 +1,13 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { AiActionClassification, AiMessageRole, AiProviderKind } from "@prisma/client";
-import { AiApprovalService } from "./ai-approval.service";
+import { ApprovalsService } from "../approvals/approvals.service";
 import { AiConversationsService } from "./ai-conversations.service";
 import { AiSettingsService } from "./ai-settings.service";
 import { AI_TOOL_DEFINITIONS, AiToolsRegistryService, classifyToolCall, UNSUPPORTED_CAPABILITIES_NOTE } from "./ai-tools.registry";
 import { AnthropicProviderService } from "./providers/anthropic-provider.service";
 import { findFallbackModelPricing } from "./providers/anthropic-models";
 import type { AiMessageContent, AiProviderMessage } from "./providers/ai-provider.interface";
-import { redactSecrets, redactSecretsDeep } from "./secret-redaction";
+import { redactSecrets, redactSecretsDeep } from "../secret-redaction";
 
 const MAX_TOOL_ITERATIONS = 6;
 
@@ -33,7 +33,7 @@ export interface SendMessageParams {
 /**
  * The orchestrator: builds the system prompt, runs the Anthropic
  * tool-use loop, gates ADMINISTRATIVE/DESTRUCTIVE calls behind
- * AiApprovalService, persists every turn, and yields UI-facing events
+ * ApprovalsService, persists every turn, and yields UI-facing events
  * for the controller to stream as SSE. This is the only place that
  * combines a provider with the tool registry — neither the provider nor
  * the registry knows the other exists.
@@ -47,7 +47,7 @@ export class AiChatService {
     private readonly provider: AnthropicProviderService,
     private readonly conversations: AiConversationsService,
     private readonly tools: AiToolsRegistryService,
-    private readonly approvals: AiApprovalService,
+    private readonly approvals: ApprovalsService,
   ) {}
 
   async *sendMessage(params: SendMessageParams): AsyncGenerator<AiChatStreamEvent> {
@@ -185,7 +185,7 @@ export class AiChatService {
    * Runs an already-approved ADMINISTRATIVE/DESTRUCTIVE tool call and
    * records what happened. Called only from AiController's
    * approve/reject endpoints — never from inside the model's own turn
-   * (see ai-approval.service.ts's header comment for why that split is
+   * (see approvals/approvals.service.ts's header comment for why that split is
    * what actually enforces "the AI cannot approve its own action").
    *
    * Known scope cut, stated plainly rather than overclaimed: this does
@@ -201,23 +201,31 @@ export class AiChatService {
    */
   async resolveApproval(environmentId: string, pendingActionId: string, decidedBy: string, approve: boolean) {
     const decision = await this.approvals.decide(environmentId, pendingActionId, decidedBy, approve);
+    // conversationId is null for a pending action an external MCP
+    // client proposed (TRACE v0.4) — there's no chat thread to append a
+    // TOOL-role record to in that case; ApprovalsService's own audit
+    // log entry (written inside `decide`) is the record for that path.
     if (!approve) {
-      await this.conversations.appendMessage(decision.conversationId, {
-        role: AiMessageRole.TOOL,
-        content: `Rejected: ${decision.toolName}`,
-        toolCalls: [{ name: decision.toolName, input: decision.toolInput }],
-      });
+      if (decision.conversationId) {
+        await this.conversations.appendMessage(decision.conversationId, {
+          role: AiMessageRole.TOOL,
+          content: `Rejected: ${decision.toolName}`,
+          toolCalls: [{ name: decision.toolName, input: decision.toolInput }],
+        });
+      }
       return { status: "rejected" as const };
     }
 
     const outcome = await this.runToolSafely(decision.toolName, decision.toolInput, { environmentId, actor: decidedBy });
     await this.approvals.recordResult(pendingActionId, outcome);
-    await this.conversations.appendMessage(decision.conversationId, {
-      role: AiMessageRole.TOOL,
-      content: `Executed: ${decision.toolName}`,
-      toolCalls: [{ name: decision.toolName, input: decision.toolInput }],
-      toolResults: [{ name: decision.toolName, output: outcome.output, isError: outcome.isError }],
-    });
+    if (decision.conversationId) {
+      await this.conversations.appendMessage(decision.conversationId, {
+        role: AiMessageRole.TOOL,
+        content: `Executed: ${decision.toolName}`,
+        toolCalls: [{ name: decision.toolName, input: decision.toolInput }],
+        toolResults: [{ name: decision.toolName, output: outcome.output, isError: outcome.isError }],
+      });
+    }
     return { status: "executed" as const, output: outcome.output, isError: outcome.isError };
   }
 

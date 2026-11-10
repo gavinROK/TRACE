@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { infraApi } from "@/lib/infra-api";
 import type { InfraCredentialSummary, InfraEnvironment } from "@/lib/infra-types";
 import { AiSettingsPanel } from "@/components/ai/AiSettingsPanel";
+import { PendingApprovalsPanel } from "@/components/ai/PendingApprovalsPanel";
+import { McpSettingsPanel } from "@/components/mcp/McpSettingsPanel";
 
 interface SettingsViewProps {
   actor: string;
@@ -43,9 +45,23 @@ export function SettingsView({ actor, environment, onLogout }: SettingsViewProps
       </section>
 
       <section className="mt-6">
-        <h2 className="text-sm font-semibold text-slate-300">AI Assistant</h2>
+        <h2 className="text-sm font-semibold text-slate-300">Native AI assistant <span className="text-[10px] font-normal text-slate-500">— optional, uses your own Anthropic API key</span></h2>
         <div className="mt-2">
           <AiSettingsPanel />
+        </div>
+      </section>
+
+      <section className="mt-6">
+        <h2 className="text-sm font-semibold text-slate-300">MCP integration <span className="text-[10px] font-normal text-slate-500">— Claude Code / Claude Desktop, no API key required</span></h2>
+        <div className="mt-2">
+          <McpSettingsPanel />
+        </div>
+      </section>
+
+      <section className="mt-6">
+        <h2 className="text-sm font-semibold text-slate-300">Pending approvals <span className="text-[10px] font-normal text-slate-500">— from either AI surface above</span></h2>
+        <div className="mt-2">
+          <PendingApprovalsPanel environmentId={environment.id} />
         </div>
       </section>
 

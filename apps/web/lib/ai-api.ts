@@ -41,6 +41,12 @@ export const aiApi = {
     aiFetch<{ ok: true }>(`/infra/environments/${environmentId}/ai/conversations/${conversationId}`, { method: "DELETE" }),
   listPendingActions: (environmentId: string, conversationId: string) =>
     aiFetch<AiPendingActionRecord[]>(`/infra/environments/${environmentId}/ai/conversations/${conversationId}/pending-actions`),
+  /** Every pending action in the environment regardless of which AI
+   * surface proposed it (the native assistant's own chat turns, or an
+   * external MCP client — TRACE v0.4) — the one queue for "approve
+   * anything waiting on me." */
+  listAllPendingActions: (environmentId: string) =>
+    aiFetch<AiPendingActionRecord[]>(`/infra/environments/${environmentId}/ai/pending-actions`),
 
   approve: (environmentId: string, pendingActionId: string) =>
     aiFetch<{ status: string; output?: unknown; isError?: boolean }>(

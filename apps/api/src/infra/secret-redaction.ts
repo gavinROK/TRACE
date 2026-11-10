@@ -1,8 +1,9 @@
 /**
- * A defense-in-depth scrub applied to every tool result before it is
- * fed back into the model's context and before it is persisted to
- * AiMessage — PRODUCT_SPEC v0.3 section 10: "Do not expose secrets in
- * logs, chat history, or tool responses."
+ * A defense-in-depth scrub, shared by both AI integration surfaces
+ * (`ai/ai-chat.service.ts` for the native assistant, `approvals/` for
+ * pending actions proposed by either surface — including an external
+ * MCP client, TRACE v0.4) — PRODUCT_SPEC v0.3 section 10: "Do not
+ * expose secrets in logs, chat history, or tool responses."
  *
  * This is not the primary control. The primary control is structural:
  * no tool handler in ai-tools.registry.ts ever calls

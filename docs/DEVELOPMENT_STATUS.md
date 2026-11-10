@@ -1,6 +1,6 @@
 # TRACE Development Status
 
-Last updated: 2026-11-10 (autonomous engineering session, branch `feature/infrastructure-control-plane`, continued live on the operator's own MacBook — OSS integration research, then TRACE v0.3's native AI assistant)
+Last updated: 2026-11-10 (autonomous engineering session, branch `feature/infrastructure-control-plane`, continued live on the operator's own MacBook — OSS integration research, TRACE v0.3's native AI assistant, then TRACE v0.4's MCP-first integration)
 
 This document is the single source of truth for what exists, what's in
 progress, and what's next. Read this first in any new session before making
@@ -1416,6 +1416,130 @@ only covers what changed and what was verified.
   `@nestjs/throttler` rate limit actually tripping under load (wiring
   confirmed via a clean app boot with `ThrottlerModule` initialized, not
   by sending 13 requests in a minute).
+
+## Phase 6 — MCP-first integration, shared approval gate (TRACE v0.4)
+
+Objective: make TRACE support two independent AI integration surfaces
+— the native assistant (kept, unchanged in UI/behavior) and an expanded
+MCP integration (now the primary path, no Anthropic API key needed) —
+sharing one consistent security model. See
+`docs/ARCHITECTURE.md`'s "Two AI integration surfaces" section for the
+full design; this entry covers what changed and what was verified.
+
+**Audit finding this phase started from**: the existing MCP server
+(`packages/mcp-server`, 16 tools, stdio transport, `TraceAccessGuard`'s
+`claude-mcp` actor) was already architecturally sound for the "primary,
+no API key" requirement — stdio is exactly what Claude Code and Claude
+Desktop both already speak, and the service token is TRACE's own secret
+with zero Anthropic billing relationship. The actual gap: the three
+mutating tools (`trace_execute_command`, `trace_execute_group_command`,
+`trace_perform_action`) passed a client-supplied `confirm` flag straight
+through to the backend, which executed immediately — an external MCP
+client could self-authorize a destructive action, inconsistent with the
+native assistant's own stronger, structural (not prompt-based) approval
+gate. That inconsistency is what this phase closes.
+
+- [x] **Extracted the approval gate out of the `ai` module** —
+      `ai/ai-approval.service.ts` moved to `approvals/approvals.service.ts`
+      (renamed `AiApprovalService` → `ApprovalsService`) in its own leaf
+      module, importable by `ConsoleModule`/`ActionsModule` without
+      creating a circular dependency with `AiModule` (which already
+      imports both of those for its own tool registry). `secret-redaction.ts`
+      moved up a level (`ai/` → `infra/`) for the same reason — both AI
+      surfaces' approval paths need it now, not just the native
+      assistant's.
+- [x] **`AiPendingAction.conversationId` made nullable** (migration
+      `20261110141325_mcp_shared_approvals`) — an MCP-proposed action has
+      no chat conversation to belong to; `onDelete: Cascade` on that
+      relation changed to `SetNull` to match. `ai-chat.service.ts`'s
+      `resolveApproval` now skips its `TOOL`-message append when
+      `conversationId` is null.
+- [x] **MCP-actor gating in `ConsoleController`/`ActionsController`** —
+      `exec`/`execGroup`/`perform` now check `req.actor` first: for the
+      MCP service-token actor (`isMcpActor`, `auth/mcp-actor.ts` — new,
+      centralizes what was three copies of the `"claude-mcp"` literal),
+      they call `ApprovalsService.create` with the exact tool-name/input
+      shape `AiToolsRegistryService` already expects
+      (`execute_command`/`execute_group_command`/`perform_action`) and
+      return `{ pending: true, pendingActionId, classification, message }`
+      instead of executing; `perform_action`'s classification reuses
+      `ActionsService.DESTRUCTIVE_ACTIONS` directly (no second list). A
+      real browser session hitting these same endpoints is completely
+      unaffected — confirmed by both new unit tests and a live check
+      (see below) that `TRACE_MCP_READ_ONLY` still blocks a POST before
+      it reaches any of this new code.
+- [x] **One shared approval queue, not two** — `GET
+      .../ai/pending-actions` (new, environment-wide, browser-only) lists
+      every `PENDING` row regardless of which surface proposed it;
+      `GET .../ai/pending-actions/:id` (new) is the one AI-related route
+      *not* restricted to a browser session, since an MCP client needs a
+      safe way to ask "is my proposed action done yet" — it discloses
+      nothing new and cannot approve anything. The existing approve/
+      reject endpoints needed no changes at all to handle an
+      MCP-originated row; they already only look up by
+      `(environmentId, pendingActionId)`.
+- [x] **4 new MCP tools** (`packages/mcp-server`, now 20 total) —
+      `trace_get_pending_action_status` (the read side of the gate above),
+      `trace_list_unenrolled_devices`, `trace_get_vm_inventory` (both pure
+      client-side filters over the existing `listDevices` call, mirroring
+      exactly what the native assistant's own tool registry already does
+      inline — no new backend endpoint), and `trace_list_alerts` (same
+      honest "no alerting engine yet" response the native assistant's
+      `list_alerts` tool gives, composed client-side over the existing
+      `listDevices`/`getLogs` calls rather than a third copy of that text
+      living in a new backend module for a stub message).
+- [x] **Settings UI** — `McpSettingsPanel` (connection instructions,
+      copy-paste `claude mcp add`/Claude Desktop config, a live
+      configured/read-only status check that never shows the token
+      itself) and `PendingApprovalsPanel` (the shared queue, reusing
+      `ApprovalCard`), both added to `SettingsView` alongside the
+      existing native-assistant panel, each section explicitly labeled
+      to distinguish "optional, your own API key" from "primary, no API
+      key" per the request's own framing.
+- [x] **No new runtime dependencies, no second application stack** —
+      every change is either a database column, a conditional branch in
+      an existing controller method, or a new client-side filter over an
+      already-fetched list. `@modelcontextprotocol/sdk` stays at its
+      existing pinned version; no SSE/HTTP transport was added (stdio
+      already satisfies both target clients).
+
+### What's verified vs. not
+
+- **Verified**: full monorepo `tsc --noEmit`/ESLint/`npm run build`/
+  `next build --webpack` clean across all four workspaces; the backend
+  Jest suite (50 suites, 302 tests — net +3 suites/+18 tests over Phase 5,
+  no regressions: `ai-approval.service.spec.ts` was replaced one-for-one
+  by `approvals/approvals.service.spec.ts`, plus three genuinely new spec
+  files) including new specs for `approvals.service`, `console.controller`,
+  `actions.controller`, `mcp-status.controller`, and new `resolveApproval`
+  cases in `ai-chat.service.spec.ts`; the MCP server's own suite (2
+  suites, 15 tests, +7 tests over Phase 5) including
+  tool-discovery (the new tool list), the approval-gated tools passing
+  through the backend's pending response rather than claiming success,
+  and the 3 new read-only tools. The compiled API server was rebuilt and
+  actually booted, mapping every new route with no DI errors. Live, over
+  real HTTP, with the real service token on this machine: unauthenticated
+  → 401 (unchanged); the MCP actor → 403 on `/infra/mcp/status` and on
+  the browser-only `/infra/ai/pending-actions` list; `TRACE_MCP_READ_ONLY=true`
+  (this machine's actual current setting) still blocks a POST to the
+  actions endpoint before it reaches any new gating code (no regression);
+  the MCP actor *can* read a single pending action's status (404 for a
+  made-up id, not 403). The already-running `next dev` instance picked up
+  every new frontend file via hot-reload with no compile-error markers.
+- **Not verified, and not claimed**: the actual "MCP proposes a
+  destructive action → it becomes a pending row → a human approves it in
+  the UI → it executes" path was not exercised live end to end — doing
+  so would have meant temporarily flipping this machine's real
+  `TRACE_MCP_READ_ONLY` setting off, which wasn't worth the live
+  security-posture change given the Jest suite already covers that exact
+  path directly (`console.controller.spec.ts`, `actions.controller.spec.ts`).
+  Also not verified: any real Claude Code or Claude Desktop process (not
+  the scripted `@modelcontextprotocol/sdk` test client) calling any of
+  the 4 new tools or hitting the new approval gate through an actual
+  conversation — the stdio transport and tool/argument shapes are
+  unchanged from what an earlier session verified live, so basic
+  connectivity is expected to keep working, but that expectation is not
+  itself a new live test and should not be read as one.
 
 <!-- New entries go above this line -->
 

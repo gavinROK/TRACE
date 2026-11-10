@@ -11,7 +11,7 @@ import { DiscoveryModule } from "../discovery/discovery.module";
 import { EnvironmentsModule } from "../environments/environments.module";
 import { MonitoringModule } from "../monitoring/monitoring.module";
 import { TopologyModule } from "../topology/topology.module";
-import { AiApprovalService } from "./ai-approval.service";
+import { ApprovalsModule } from "../approvals/approvals.module";
 import { AiChatService } from "./ai-chat.service";
 import { AiConversationsService } from "./ai-conversations.service";
 import { AiSettingsService } from "./ai-settings.service";
@@ -46,9 +46,10 @@ import { AnthropicProviderService } from "./providers/anthropic-provider.service
     ConsoleModule,
     ActionsModule,
     DiscoveryModule,
+    ApprovalsModule,
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
   ],
   controllers: [AiController],
-  providers: [AiSettingsService, AnthropicProviderService, AiToolsRegistryService, AiApprovalService, AiConversationsService, AiChatService],
+  providers: [AiSettingsService, AnthropicProviderService, AiToolsRegistryService, AiConversationsService, AiChatService],
 })
 export class AiModule {}

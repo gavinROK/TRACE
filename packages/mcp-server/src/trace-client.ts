@@ -130,4 +130,14 @@ export class TraceClient {
   getOperationStatus(environmentId: string, runId: string) {
     return this.request<unknown>(`/infra/environments/${environmentId}/console/runs/${runId}`);
   }
+
+  /** The read side of TRACE v0.4's approval gate — checks whether a
+   * pending action this client proposed (via executeCommand/
+   * executeGroupCommand/performAction) has been approved/rejected yet.
+   * Never approves anything itself; see docs/ARCHITECTURE.md's "MCP
+   * integration" section for why that split is enforced server-side,
+   * not just by this client omitting the call. */
+  getPendingActionStatus(environmentId: string, pendingActionId: string) {
+    return this.request<unknown>(`/infra/environments/${environmentId}/ai/pending-actions/${pendingActionId}`);
+  }
 }

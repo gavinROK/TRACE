@@ -9,6 +9,7 @@ import { CredentialsModule } from "./credentials/credentials.module";
 import { InfraDevicesModule } from "./devices/devices.module";
 import { DiscoveryModule } from "./discovery/discovery.module";
 import { EnvironmentsModule } from "./environments/environments.module";
+import { McpModule } from "./mcp/mcp.module";
 import { MonitoringModule } from "./monitoring/monitoring.module";
 import { TopologyModule } from "./topology/topology.module";
 
@@ -32,6 +33,7 @@ import { TopologyModule } from "./topology/topology.module";
     MonitoringModule,
     TopologyModule,
     AiModule,
+    McpModule,
   ],
 })
 export class InfraModule {}
