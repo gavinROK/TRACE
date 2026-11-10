@@ -8,7 +8,7 @@ describe("CredentialsService", () => {
   const prisma = {
     infraEnvironment: { findUnique: jest.fn() },
     infraDevice: { findFirst: jest.fn() },
-    infraCredential: { create: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), delete: jest.fn() },
+    infraCredential: { create: jest.fn(), findMany: jest.fn(), findFirst: jest.fn(), delete: jest.fn(), update: jest.fn() },
   };
   const masterKeyStore = { getKey: jest.fn() };
   const service = new CredentialsService(prisma as never, masterKeyStore as never);
@@ -85,6 +85,40 @@ describe("CredentialsService", () => {
         orderBy: [{ deviceId: "desc" }, { createdAt: "desc" }],
       });
       expect(result).toEqual({ protocol: "SSH", payload: { username: "gavin" } });
+    });
+  });
+
+  describe("recordHostKeyFingerprint", () => {
+    it("does nothing when no credential exists for the device/protocol", async () => {
+      prisma.infraCredential.findFirst.mockResolvedValue(null);
+
+      await service.recordHostKeyFingerprint("env1", "d1", "SSH" as never, "fp1");
+
+      expect(prisma.infraCredential.update).not.toHaveBeenCalled();
+    });
+
+    it("merges the fingerprint into the decrypted payload and re-encrypts", async () => {
+      prisma.infraCredential.findFirst.mockResolvedValue({ id: "c1", encryptedPayload: "enc", iv: "iv", authTag: "tag" });
+      (decryptSecret as jest.Mock).mockReturnValue({ username: "gavin", password: "secret" });
+      (encryptSecret as jest.Mock).mockReturnValue({ encryptedPayload: "enc2", iv: "iv2", authTag: "tag2" });
+
+      await service.recordHostKeyFingerprint("env1", "d1", "SSH" as never, "fp1");
+
+      expect(encryptSecret).toHaveBeenCalledWith({ username: "gavin", password: "secret", hostKeyFingerprint: "fp1" }, Buffer.alloc(32));
+      expect(prisma.infraCredential.update).toHaveBeenCalledWith({
+        where: { id: "c1" },
+        data: { encryptedPayload: "enc2", iv: "iv2", authTag: "tag2" },
+      });
+    });
+
+    it("never overwrites an already-pinned fingerprint", async () => {
+      prisma.infraCredential.findFirst.mockResolvedValue({ id: "c1", encryptedPayload: "enc", iv: "iv", authTag: "tag" });
+      (decryptSecret as jest.Mock).mockReturnValue({ username: "gavin", hostKeyFingerprint: "already-pinned" });
+
+      await service.recordHostKeyFingerprint("env1", "d1", "SSH" as never, "a-different-fingerprint");
+
+      expect(encryptSecret).not.toHaveBeenCalled();
+      expect(prisma.infraCredential.update).not.toHaveBeenCalled();
     });
   });
 

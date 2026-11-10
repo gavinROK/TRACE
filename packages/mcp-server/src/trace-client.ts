@@ -140,4 +140,13 @@ export class TraceClient {
   getPendingActionStatus(environmentId: string, pendingActionId: string) {
     return this.request<unknown>(`/infra/environments/${environmentId}/ai/pending-actions/${pendingActionId}`);
   }
+
+  /** Read-only by construction (see connector.types.ts's DiagnosticName)
+   * — never routes through the approval queue, same as checkHealth. */
+  runDiagnostic(environmentId: string, deviceId: string, name: string, params?: Record<string, unknown>) {
+    return this.request<unknown>(`/infra/environments/${environmentId}/devices/${deviceId}/diagnostics`, {
+      method: "POST",
+      body: JSON.stringify({ name, params }),
+    });
+  }
 }

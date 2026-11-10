@@ -55,6 +55,7 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
         "trace_detect_local_network",
         "trace_scan_network",
         "trace_update_device",
+        "trace_run_diagnostic",
       ].sort(),
     );
   });
@@ -200,6 +201,25 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
 
       const parsed = JSON.parse((result.content as Array<{ type: string; text: string }>)[0].text) as Array<{ id: string }>;
       expect(parsed).toEqual([expect.objectContaining({ id: "vm1" })]);
+    });
+
+    it("trace_run_diagnostic calls the diagnostics endpoint directly — read-only, no pending-approval wrapper", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ name: "os_info", collectedAt: "2026-01-01T00:00:00.000Z", output: "Ubuntu 22.04" }),
+      });
+      const client = await connectedClient();
+
+      const result = await client.callTool({ name: "trace_run_diagnostic", arguments: { environmentId: "env1", deviceId: "d1", name: "os_info" } });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:4000/infra/environments/env1/devices/d1/diagnostics",
+        expect.objectContaining({ method: "POST" }),
+      );
+      const parsed = JSON.parse((result.content as Array<{ type: string; text: string }>)[0].text);
+      expect(parsed.output).toBe("Ubuntu 22.04");
+      expect(parsed.pending).toBeUndefined();
     });
 
     it("trace_list_alerts honestly reports no alerting engine instead of fabricating alerts", async () => {

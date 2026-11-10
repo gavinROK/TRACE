@@ -7,7 +7,7 @@ describe("DevicePollingService", () => {
     infraMetricSample: { createMany: jest.fn() },
   };
   const connectorRegistry = { get: jest.fn(), require: jest.fn() };
-  const credentialsService = { getDecryptedForDevice: jest.fn() };
+  const credentialsService = { getDecryptedForDevice: jest.fn(), recordHostKeyFingerprint: jest.fn() };
   const auditLog = { record: jest.fn() };
   const service = new DevicePollingService(prisma as never, connectorRegistry as never, credentialsService as never, auditLog as never);
 
@@ -53,6 +53,32 @@ describe("DevicePollingService", () => {
       data: { onlineState: "ONLINE", lastContactAt: new Date("2026-01-01") },
     });
     expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({ action: "device.health-check" }));
+  });
+
+  it("persists a newly-pinned SSH host key fingerprint onto the credential", async () => {
+    prisma.infraDevice.findFirst.mockResolvedValue({ id: "d1", ipAddresses: ["10.0.0.5"], managementProtocols: ["SSH"], lastContactAt: null });
+    connectorRegistry.get.mockReturnValue({});
+    credentialsService.getDecryptedForDevice.mockResolvedValue({ protocol: "SSH", payload: { username: "x" } });
+    connectorRegistry.require.mockReturnValue({
+      getHealth: jest.fn().mockResolvedValue({ onlineState: "ONLINE", checkedAt: new Date(), newlyPinnedHostKeyFingerprint: "abc123==" }),
+    });
+
+    await service.pollDevice("env1", "d1");
+
+    expect(credentialsService.recordHostKeyFingerprint).toHaveBeenCalledWith("env1", "d1", "SSH", "abc123==");
+  });
+
+  it("never calls recordHostKeyFingerprint when getHealth didn't just pin a new one", async () => {
+    prisma.infraDevice.findFirst.mockResolvedValue({ id: "d1", ipAddresses: ["10.0.0.5"], managementProtocols: ["SSH"], lastContactAt: null });
+    connectorRegistry.get.mockReturnValue({});
+    credentialsService.getDecryptedForDevice.mockResolvedValue({ protocol: "SSH", payload: { username: "x" } });
+    connectorRegistry.require.mockReturnValue({
+      getHealth: jest.fn().mockResolvedValue({ onlineState: "ONLINE", checkedAt: new Date() }),
+    });
+
+    await service.pollDevice("env1", "d1");
+
+    expect(credentialsService.recordHostKeyFingerprint).not.toHaveBeenCalled();
   });
 
   it("collects metrics and stores them when the connector supports getMetrics and the device is online", async () => {

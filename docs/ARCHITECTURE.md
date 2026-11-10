@@ -27,7 +27,8 @@ control plane" section comment for the full data model.
 | `connectors` | One class per management protocol (SSH, Proxmox API, SNMPv3), behind a shared `InfraConnector` interface. |
 | `discovery` | Local network probes (interfaces, ARP, ping, optional nmap) and Proxmox-driven VM/container enumeration. |
 | `console` | The command-execution engine — device-name resolution, bounded concurrency, timeouts, cancellation, history. |
-| `actions` | `performAction` dispatch (start/stop/reboot a VM, …), with a confirm-gate for destructive actions. |
+| `actions` | `performAction` dispatch (start/stop/reboot a VM, SSH service/package actions, …), with a confirm-gate for destructive actions. |
+| `diagnostics` | `runDiagnostic` dispatch — the fixed, read-only inspection catalog (TRACE v0.5); never approval-gated. |
 | `monitoring` | Scheduled + on-demand polling that calls a connector's `getHealth`/`getMetrics` and persists real samples. |
 | `topology` | Assembles the graph (nodes + verified/inferred edges) the frontend renders. |
 | `audit` | The security/audit trail — every credential change, command, and action. |
@@ -54,9 +55,13 @@ protocol **and** the connector for it implements the method — this is the
 single enforcement point for "don't show a control that isn't real."
 
 - **SSH** (`ssh2`) — real command execution, health (a trivial `true`
-  exec), and metrics (one probe command parsing `/proc/loadavg`,
-  `free -b`, `/proc/uptime`, `df`). Trust-on-first-use host-key pinning,
-  with a per-device fingerprint override once you've recorded one.
+  exec), metrics (one probe command parsing `/proc/loadavg`, `free -b`,
+  `/proc/uptime`, `df`), ten read-only structured diagnostics, and a
+  curated `performAction` catalog (service/package administration) —
+  see "Infrastructure execution framework" below. Trust-on-first-use
+  host-key pinning, persisted onto the credential after the first
+  successful connection (TRACE v0.5) with a per-device fingerprint
+  override once you've recorded one.
 - **Proxmox API** (`node:https`, no extra dependency) — node/VM/container
   discovery, health, metrics, and start/stop/shutdown/reboot. Verifies TLS
   by default; a device's credential can opt into `allowSelfSigned` once
@@ -69,6 +74,79 @@ single enforcement point for "don't show a control that isn't real."
   router management, JetKVM, Bambu Lab. Each needs its actual protocol
   verified against the real device before a connector is written — see
   "Known limitations" below.
+
+## Infrastructure execution framework (TRACE v0.5)
+
+The "universal infrastructure control plane" goal — Claude investigating,
+configuring, and troubleshooting heterogeneous infrastructure through one
+MCP server, without a second application stack per protocol — is served
+by extending the *existing* `InfraConnector` interface, not by building a
+parallel framework next to it. Two additions to `connector.types.ts`:
+
+- **`runDiagnostic(target, name, params?)`** — a fixed, cross-protocol
+  catalog of ten read-only inspections (`DiagnosticName`): `os_info`,
+  `cpu_memory_disk`, `network_interfaces`, `service_status`,
+  `system_logs`, `process_list`, `package_inventory`, `firewall_rules`,
+  `filesystem_info`, `security_posture`. Unlike `executeCommand`, the
+  *connector* owns the exact command for each name — a caller supplies
+  only a name from the fixed enum plus narrow params (a service name, a
+  log unit, a line count), never a raw command string. Every name is
+  non-mutating by construction, so (like `getHealth`/`scan_network`)
+  none of them are approval-gated — `infra/diagnostics` has no
+  `isMcpActor` branch anywhere, on purpose. `security_posture` is the
+  one name that returns structured `SecurityFinding[]` (severity +
+  check + detail) instead of raw text — the composite most directly
+  useful for "audit my infrastructure for security weaknesses": sshd's
+  `PermitRootLogin`/`PasswordAuthentication`, a failed-SSH-login count,
+  pending package updates, and world-writable files under `/etc`.
+- **`SshConnector.performAction`** — reuses the exact `performAction`
+  abstraction Proxmox's start/stop/shutdown/reboot already goes through,
+  so `trace_perform_action`/`ActionsController`/the approval queue needed
+  **zero** changes: `service_start`/`service_stop`/`service_restart`/
+  `service_enable`/`service_disable`/`package_install`/`reboot`.
+  `service_stop`/`service_restart` were added to the shared
+  `DESTRUCTIVE_ACTIONS` set (`actions.service.ts`) alongside Proxmox's
+  `stop`/`shutdown`/`reboot` — one list, still imported everywhere
+  classification happens, never duplicated.
+
+**One new MCP tool, not several**: `trace_run_diagnostic` is the only
+tool TRACE v0.5 added. The ten diagnostic names are enumerated directly
+in its Zod schema rather than needing a separate "list what's available"
+tool call. The write side needed no new tool at all — `trace_perform_action`
+already generically dispatches any action string to whichever connector
+implements it; only its description text changed, to document the new
+SSH actions.
+
+**Command-injection prevention**: every diagnostic/action parameter that
+becomes part of a shell command (a service name, package name, systemd
+unit) must match `SAFE_IDENTIFIER` (`/^[A-Za-z0-9][A-Za-z0-9_.@:-]{0,127}$/`)
+in `ssh-connector.ts` before it is ever interpolated — anything else
+(`;`, `$()`, spaces, quotes) throws a `BadRequestException` before
+reaching a shell. This runs **both** when an MCP client proposes an
+action (so a careless proposal is still visible, unaltered, to the human
+reviewer in the pending-action's `toolInput`) **and** again at actual
+execution time (so even an approved-without-reading proposal can't
+reach a shell) — live-verified: a `service_status` call with
+`service: "nginx; rm -rf / #"` was rejected with a clean 400 before any
+SSH connection was attempted, and a `perform_action` proposal with the
+same shape in `params` was still accepted into the pending queue with
+the malicious string preserved verbatim for review.
+
+**Output/resource limits**: diagnostic and action output is capped at
+200 KB (`capOutput`, SshConnector) with a `truncated` flag rather than
+growing a response (or an audit row) unbounded; `system_logs`' `lines`
+param is clamped to `[1, 1000]`; every exec has a bounded timeout
+(20s for diagnostics, 30s for actions, matching `CommandExecutionService`'s
+existing defaults) via the same `AbortSignal`/timer plumbing
+`executeCommand` already used.
+
+**Failure handling**: a connector-level failure (unreachable host, auth
+failure, timeout) is converted to a `BadGatewayException` (502) in
+`DiagnosticsService.run`, distinct from a validation error's `BadRequestException`
+(400) — found live, not by inspection: the first version let a connection
+failure propagate as an opaque `{"statusCode":500,"message":"Internal
+server error"}`, fixed and covered by a unit test
+(`diagnostics.service.spec.ts`) once the live 502 was confirmed.
 
 ## Two AI integration surfaces
 
@@ -235,18 +313,29 @@ endpoints are completely unaffected — the check is purely on `req.actor`.
   never re-implements connector logic, and it never receives a
   credential. Claude only ever sees what TRACE's own API already decided
   it's allowed to return.
+- **Structured-operation parameters** (a service/package/unit name in
+  `runDiagnostic`/`performAction`) are checked against a strict
+  allowlist regex before ever being interpolated into a command string
+  — see "Infrastructure execution framework" above. This is a different
+  mechanism from "command execution never does shell interpolation"
+  above it: `executeCommand` passes a whole command through untouched;
+  `runDiagnostic`/`performAction` build the command themselves from a
+  fixed template plus one validated identifier, so the validation
+  target is much narrower and checkable with a single regex.
 
 ## Known limitations
 
-- **The backend's `npm run dev` (`tsx watch`) silently breaks dependency
-  injection for some services.** `tsx`'s esbuild-based transform doesn't
-  reliably emit `emitDecoratorMetadata` the way `tsc` does — a
-  constructor-injected service can come back `undefined` at request
-  time with no error at startup (confirmed live: `TraceAuthService`
-  injected into `TraceAuthController`/`TraceAccessGuard` was `undefined`
-  under `tsx watch` and correctly populated in the identical compiled
-  build). Build and run the compiled server
-  (`npm run build && npm run start`) instead until this is root-caused.
+- ~~The backend's `npm run dev` (`tsx watch`) silently breaks dependency
+  injection for some services~~ — **fixed, commit `8d17002`.** `tsx`'s
+  esbuild-based transform never emits `emitDecoratorMetadata` at all
+  (confirmed on every affected class, not just a handful — `ActionsController`
+  and `EnvironmentsController`, neither touched by the fix itself, showed
+  the identical symptom), so every constructor-injected, implicitly-typed
+  dependency across `apps/api/src` came back `undefined` under `tsx watch`
+  with no error at startup. Fixed by adding explicit `@Inject()` tokens to
+  all 105 affected constructor parameters across 50 files — confirmed live,
+  side by side, that `npm run dev` and the compiled build now resolve
+  dependencies identically. `npm run dev` is safe to use normally again.
 - **`arp -a` returns completely empty output when invoked from Node on
   at least one real macOS machine, even though the same command run
   directly in a shell shows a fully populated ARP table.** Confirmed via
@@ -292,19 +381,56 @@ endpoints are completely unaffected — the check is purely on `req.actor`.
   `InfraCredential` row becomes undecryptable (there is no re-encryption
   tool yet). Back up credentials via re-entering them, not via the
   database, until this exists.
-- **SSH host-key trust-on-first-use is in-memory per process**, not
-  persisted across restarts — a restarted API will silently re-trust
-  whatever key a host presents on its next first connection. Pin a
-  fingerprint in the device's credential (`hostKeyFingerprint`) if you
-  need persistence today.
-- **Live-infrastructure testing so far covers Proxmox and local network
-  discovery, not SSH or SNMP.** The Proxmox connector and the local
-  discovery scan have both been run against a real homelab (a real
-  Beelink/Proxmox VE host, a real LAN); the SSH and SNMPv3 connectors
-  still have only unit-test coverage against a mocked transport (`ssh2`,
-  `net-snmp`) — neither has been run against a real Linux host or a real
-  managed switch. See the root README's "What's tested" for the exact,
-  current split.
+- ~~SSH host-key trust-on-first-use is in-memory per process, not
+  persisted across restarts~~ — **durable now (TRACE v0.5).** The first
+  successful connection's fingerprint is persisted onto the credential
+  (`CredentialsService.recordHostKeyFingerprint`, called from
+  `DevicePollingService.pollDevice` whenever `getHealth` reports
+  `newlyPinnedHostKeyFingerprint`) and never silently overwritten once
+  set. Confirmed live: restarted the API between two health checks
+  against a real container and the second process, with an empty
+  in-memory map, still verified against the DB-persisted fingerprint
+  rather than re-trusting. A connection whose key no longer matches the
+  persisted one is refused outright (`ConnectorError`, surfaced as a
+  clean `OFFLINE`/502 rather than silently proceeding) — verified with
+  a deliberately mismatched fingerprint.
+- **Live-infrastructure testing covers Proxmox, local network discovery,
+  and now SSH; SNMP still does not.** The Proxmox connector and the
+  local discovery scan have been run against a real homelab (a real
+  Beelink/Proxmox VE host, a real LAN). SSH was live-tested in TRACE
+  v0.5 against a disposable Docker container (`lscr.io/linuxserver/openssh-server`,
+  removed after testing): password auth, host-key TOFU pinning and its
+  DB persistence across a real restart, `os_info`/`security_posture`/
+  `firewall_rules`/`service_status` diagnostics, command-injection
+  rejection in both the diagnostics and `perform_action` paths, a
+  clean 404 for an unknown/cross-environment device, a clean 502 (not
+  an opaque 500 — a real bug this testing caught, see below) for an
+  unreachable port, and `trace_perform_action`'s approval-gating for a
+  new SSH action (`package_install`) through a real, already-connected
+  MCP client session. The SNMPv3 connector still has only unit-test
+  coverage against a mocked `net-snmp` transport — not run against a
+  real managed switch. See the root README's "What's tested" for the
+  exact, current split.
+- **`security_posture`'s sshd-config check only inspects the
+  `PasswordAuthentication` directive's literal text** — found live: a
+  test container had `PasswordAuthentication no` in `sshd_config` (so
+  correctly produced no finding) yet still accepted a password login,
+  because PAM's keyboard-interactive path doesn't go through that
+  directive at all. A real hardening check would also need
+  `ChallengeResponseAuthentication`/`KbdInteractiveAuthentication`/
+  `UsePAM`; a future enhancement, not implemented in this phase.
+- **`firewall_rules` returns an empty string, not an explicit "no
+  firewall tool found," when none of ufw/nft/iptables exist** — found
+  live against a minimal container with no firewall tooling installed
+  at all. Distinguishable from context today, not from the output
+  itself; `package_inventory`'s equivalent fallback (an explicit `echo`)
+  would be the fix, not yet applied to `firewall_rules`.
+- **`service_status`/the SSH `service_*` administrative actions assume
+  `systemctl`** — found live: a minimal Alpine-based test container has
+  neither `systemctl` nor `service`, so both fail cleanly (a readable
+  "command not found" in the output, not a crash) rather than working.
+  Covers the systemd-based distros most real servers run (Debian/Ubuntu/
+  RHEL/Fedora, including Proxmox's own host OS), not every init system.
 - **`@nestjs/schedule`'s and `@nestjs/mapped-types`'s current npm
   releases ship ESM-only** (`"type": "module"`), which a CommonJS-compiled
   NestJS app cannot `require()` at runtime (confirmed by actually booting
@@ -378,18 +504,25 @@ endpoints are completely unaffected — the check is purely on `req.actor`.
   options are used as-is; a 429 that outlives the SDK's own retries
   surfaces to the user as a plain error with `retryable: true`, with no
   additional backoff loop in TRACE's own code.
-- **The MCP approval gate (TRACE v0.4) has not been exercised with a
-  real Claude Code or Claude Desktop process issuing the destructive
-  call** — the gate itself (controller-level actor check →
-  `AiPendingAction` row → browser-only approve/reject) is covered by
-  unit tests and a live, un-mocked HTTP check of the surrounding
-  authorization boundaries (401/403s, the pre-existing
-  `TRACE_MCP_READ_ONLY` block still working), but the full "MCP client
-  proposes → human approves in the UI → it actually runs" path was not
-  run end to end against a live, non-read-only backend in this
-  environment, and no real Claude Code/Desktop session has exercised
-  any of the 4 tools added this phase. See `packages/mcp-server/README.md`'s
-  "What's verified vs. what isn't" for the precise split.
+- **The MCP approval gate's propose-and-pend half is now live-verified
+  through a real Claude Code session; the approve-and-execute half still
+  isn't.** A real, already-`claude mcp add`-registered Claude Code
+  session called `trace_perform_action` against a real device (the
+  disposable SSH container) with both a benign action and a
+  command-injection attempt in its params — both correctly came back
+  `{ pending: true, ... }`, never executed, and `trace_get_pending_action_status`
+  showed the exact unaltered params for a human reviewer to see before
+  deciding. What's still only unit-tested, not live: the human actually
+  clicking approve in the dashboard and the connector call that follows
+  — Claude structurally cannot do that half itself (`ApprovalsService.decide`
+  refuses a `claude-mcp` decider), so it needs a person at the keyboard.
+  `trace_run_diagnostic` (added this phase) was verified live only over
+  raw HTTP with the same bearer token the MCP bridge itself uses, not
+  through the actual stdio bridge — the already-running bridge process
+  predates this tool's build and needs `claude mcp` to reconnect (a
+  restart or `/mcp`) before it would appear in a session's tool list.
+  See `packages/mcp-server/README.md`'s "What's verified vs. what isn't"
+  for the precise split.
 - **No token rotation/generation UI** — `TRACE_MCP_SERVICE_TOKEN` stays
   a `.env` value, set via `openssl rand -base64 32` and a server
   restart, same as before this phase. The Settings page's MCP panel

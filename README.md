@@ -41,21 +41,23 @@ remains between what's live-verified and what's still only unit-tested.
 | Proxmox connector | Unit tests mocking `node:https`, **plus a real live connection to a real Proxmox VE host**: password/ticket auth, automatic node-name discovery, real CPU/memory/disk metrics collected, 4 real VMs/containers discovered and added to inventory, all confirmed to survive a backend restart |
 | Local network discovery (interfaces, default gateway, nmap ping sweep) | Unit tests, **plus a real scan of the operator's actual LAN** — correctly detected the real subnet/gateway and found real live hosts via nmap |
 | ARP-based MAC/vendor discovery | Unit tests only. **Live-tested and found not to work on this specific Mac**: `arp -a` returns empty output when invoked from Node (but not from an interactive shell), almost certainly macOS's "Local Network" privacy permission gating ARP visibility per-binary. Discovery still works via nmap + gateway detection; it just can't add a MAC/vendor hint until this permission is granted — see "Known limitations." |
-| SSH connector | Unit tests mocking `ssh2`'s `Client` | Not yet tested against a real SSH host in this repo's history — point it at a real Linux box to find out |
+| SSH connector (health/metrics/exec/diagnostics/actions) | Unit tests mocking `ssh2`'s `Client`, **plus a real disposable Docker container** (`lscr.io/linuxserver/openssh-server`, removed after testing): password auth, host-key TOFU pinning and its persistence across a real process restart, 4 of 10 read-only diagnostics, command-injection rejection, clean 404/502 for unknown-device/unreachable-host, and an approval-gated `perform_action` proposal through a real MCP client session | `service_status`/the `service_*` actions assume `systemctl` (not tested against a non-systemd init); `firewall_rules` returns an empty string rather than an explicit "not found" when no firewall tool exists; `security_posture`'s sshd check doesn't account for PAM keyboard-interactive — see `docs/ARCHITECTURE.md`'s "Known limitations" |
 | SNMP connector | Unit tests mocking `net-snmp` | Not yet tested against a real SNMPv3-capable device |
 | WebAuthn/YubiKey | Unit tests mocking `@simplewebauthn/server` (challenge/credential logic) | Not yet tested against a real browser + hardware security key |
-| MCP server (20 tools; stdio — Claude Code **and** Claude Desktop use the same command/args/env shape) | A real `@modelcontextprotocol/sdk` `Client` connects over the SDK's in-memory transport and calls tools end to end, including the approval-gated ones (`packages/mcp-server/src/server.integration.spec.ts`); a real `claude mcp add` registration was verified live against a real backend in an earlier session (16 tools, pre-dating the approval gate) | The approval gate and the 4 tools added since have not been exercised by a real Claude Code/Desktop conversation — see `packages/mcp-server/README.md`'s "What's verified vs. what isn't" |
+| MCP server (21 tools; stdio — Claude Code **and** Claude Desktop use the same command/args/env shape) | A real `@modelcontextprotocol/sdk` `Client` connects over the SDK's in-memory transport and calls tools end to end, including the approval-gated ones (`packages/mcp-server/src/server.integration.spec.ts`); a real `claude mcp add` registration was verified live against a real backend in an earlier session (16 tools, pre-dating the approval gate) | The approval gate and the 5 tools added since have not been exercised by a real Claude Code/Desktop conversation — see `packages/mcp-server/README.md`'s "What's verified vs. what isn't" |
 | NestJS dependency wiring | `infra.module.spec.ts` resolves the entire DI graph; **the compiled server was booted against a real database** and every route, including live Proxmox calls, worked | — |
 | Frontend (unified `/` dashboard) | `tsc --noEmit`, ESLint, and a production build (via webpack — see Troubleshooting) all pass; the dev server was booted and every route (`/`, `/dev-intel`, `/infra` redirect) confirmed to respond correctly | Not click-tested in an actual browser in this environment — no GUI access here; verify the click-through yourself |
 
-**A real, important gotcha found live**: the backend's normal dev command,
-`npm run dev` (`tsx watch`), silently breaks dependency injection for
-several classes — `tsx`'s esbuild-based transform doesn't reliably emit
-`emitDecoratorMetadata` the way `tsc` does, so a constructor-injected
-service comes back `undefined` at request time with no error at startup.
-**Build and run the compiled server (`npm run build && npm run start`,
-or `node dist/main.js`) instead of `npm run dev` until this is fixed** —
-confirmed by isolating the exact same request against both and comparing.
+**A real gotcha found live, now fixed (commit `8d17002`)**: the backend's
+normal dev command, `npm run dev` (`tsx watch`), used to silently break
+dependency injection for every constructor-injected provider in
+`apps/api/src` — `tsx`'s esbuild-based transform never emits
+`emitDecoratorMetadata` the way `tsc` does, so a service came back
+`undefined` at request time with no error at startup. Fixed by adding
+explicit `@Inject()` tokens to every affected constructor parameter
+(105 of them, across 50 files) — confirmed live, side by side, that
+`npm run dev` and `npm run build && npm run start` now resolve
+dependencies identically. `npm run dev` is safe to use normally again.
 
 No live device metrics, IP addresses, or topology connections anywhere in
 this repository are invented — see

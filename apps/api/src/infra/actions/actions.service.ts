@@ -12,7 +12,7 @@ import { withManagementPort } from "../connectors/apply-management-port";
  * stopped. Exported so the AI tool registry (ai/ai-tools.registry.ts)
  * classifies perform_action identically to this service, instead of
  * maintaining a second list that could drift out of sync. */
-export const DESTRUCTIVE_ACTIONS = new Set(["stop", "shutdown", "reboot"]);
+export const DESTRUCTIVE_ACTIONS = new Set(["stop", "shutdown", "reboot", "service_stop", "service_restart"]);
 
 @Injectable()
 export class ActionsService {

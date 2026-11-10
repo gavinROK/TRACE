@@ -154,7 +154,10 @@ export function createServer(client: TraceClient): McpServer {
 
   registerTool(
     "trace_perform_action",
-    "Propose a management action on a device (e.g. start/stop/reboot a Proxmox VM). This never executes immediately — it creates a pending action (ADMINISTRATIVE for start, DESTRUCTIVE for stop/shutdown/reboot) a human must approve in TRACE's dashboard before it runs; `confirm` has no effect on that gate. Use trace_get_pending_action_status to check the outcome.",
+    "Propose a management action on a device. This never executes immediately — it creates a pending action a human must approve in TRACE's dashboard before it runs; `confirm` has no effect on that gate. Use trace_get_pending_action_status to check the outcome. " +
+      "Proxmox VMs: start (ADMINISTRATIVE), stop/shutdown/reboot (DESTRUCTIVE). " +
+      "SSH hosts: service_start/service_enable/service_disable/package_install (ADMINISTRATIVE, pass params:{service} or params:{package}), service_stop/service_restart (DESTRUCTIVE, params:{service}), reboot (DESTRUCTIVE). " +
+      "Every identifier in params (service/package name) must be a plain name — no spaces or shell metacharacters; the connector rejects anything else before it ever reaches a shell.",
     {
       environmentId: z.string(),
       deviceId: z.string(),
@@ -234,6 +237,32 @@ export function createServer(client: TraceClient): McpServer {
     },
     async ({ environmentId, deviceId, ...patch }) =>
       jsonResult(await guarded(() => client.updateDevice(environmentId as string, deviceId as string, patch))),
+  );
+
+  registerTool(
+    "trace_run_diagnostic",
+    "Run one read-only inspection on a device (SSH hosts today). Never requires approval — every name below is non-mutating by construction, same guarantee as trace_get_health. Names: os_info, cpu_memory_disk, network_interfaces, process_list, package_inventory, firewall_rules, filesystem_info (no params); service_status (params:{service}) and system_logs (params:{unit?, lines?}, unit/service must be a plain identifier, no shell metacharacters); security_posture (no params — returns structured findings: PermitRootLogin/PasswordAuthentication sshd config, failed-login count, pending package updates, world-writable files under /etc). Use this before trace_perform_action to understand what you're about to change, and again afterward to verify the outcome.",
+    {
+      environmentId: z.string(),
+      deviceId: z.string(),
+      name: z.enum([
+        "os_info",
+        "cpu_memory_disk",
+        "network_interfaces",
+        "service_status",
+        "system_logs",
+        "process_list",
+        "package_inventory",
+        "firewall_rules",
+        "filesystem_info",
+        "security_posture",
+      ]),
+      params: z.record(z.unknown()).optional(),
+    },
+    async ({ environmentId, deviceId, name, params }) =>
+      jsonResult(
+        await guarded(() => client.runDiagnostic(environmentId as string, deviceId as string, name as string, params as Record<string, unknown> | undefined)),
+      ),
   );
 
   registerTool(

@@ -7,6 +7,7 @@ import { ConnectorsModule } from "./connectors/connectors.module";
 import { ConsoleModule } from "./console/console.module";
 import { CredentialsModule } from "./credentials/credentials.module";
 import { InfraDevicesModule } from "./devices/devices.module";
+import { DiagnosticsModule } from "./diagnostics/diagnostics.module";
 import { DiscoveryModule } from "./discovery/discovery.module";
 import { EnvironmentsModule } from "./environments/environments.module";
 import { McpModule } from "./mcp/mcp.module";
@@ -27,6 +28,7 @@ import { TopologyModule } from "./topology/topology.module";
     CredentialsModule,
     EnvironmentsModule,
     InfraDevicesModule,
+    DiagnosticsModule,
     DiscoveryModule,
     ConsoleModule,
     ActionsModule,

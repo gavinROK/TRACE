@@ -39,15 +39,17 @@ billing.
 | `trace_diagnose_device` | Explain exactly why a device isn't connected (missing address, missing credential, unreachable) instead of a generic error. | read-only |
 | `trace_detect_local_network` | Detect TRACE's own machine's active interface, subnet, and default gateway. | read-only |
 | `trace_scan_network` | Scan a subnet for devices (ARP + optional nmap ping sweep, no port scanning). | read-only |
-| `trace_update_device` | Update a device's non-secret settings (name, IPs, port, protocols, tags, notes) — never accepts a credential. | read-only |
+| `trace_update_device` | Update a device's non-secret settings (name, IPs, port, protocols, tags, notes) — never accepts a credential. | **approval required** |
+| `trace_run_diagnostic` | Read-only inspection on a device: OS info, CPU/memory/disk, network interfaces, service status, system logs, process list, package inventory, firewall rules, filesystem info, or a structured security-posture assessment. SSH hosts today. | read-only |
 
-**The three "approval required" tools never execute anything directly.**
+**The four "approval required" tools never execute anything directly.**
 Calling one creates an `AiPendingAction` row and returns
 `{ pending: true, pendingActionId, classification, message }` instead of
 a result — a human must approve it from TRACE's own web UI (Settings →
 Pending approvals) before it runs. This is enforced by TRACE's backend
-(`ConsoleController`/`ActionsController` check the caller's actor,
-independent of any `confirm` flag the tool call itself sends), not by
+(`ConsoleController`/`ActionsController`/`InfraDevicesController` each
+check the caller's actor, independent of any `confirm` flag the tool
+call itself sends), not by
 this package or by trusting the calling client to ask first — see
 `docs/ARCHITECTURE.md`'s "MCP integration" section for why. Poll
 `trace_get_pending_action_status` (or just ask the user to check TRACE)
@@ -56,8 +58,18 @@ queue, and the exact same `AiPendingAction` database rows, that TRACE's
 native chat assistant's own administrative/destructive tool calls use —
 one shared security control, not two.
 
+SSH hosts now support structured diagnostics (`trace_run_diagnostic`) and
+a curated set of administrative actions through `trace_perform_action`
+(`service_start`/`service_stop`/`service_restart`/`service_enable`/
+`service_disable`/`package_install`/`reboot`) — see
+`docs/ARCHITECTURE.md`'s "Infrastructure execution framework" section
+for the full catalog, the identifier-allowlist validation that makes
+interpolating a service/package name into a shell command safe, and
+what's deliberately out of scope (arbitrary firewall-rule edits, a write
+path for any protocol besides SSH).
+
 Not implemented (see the root README's "Current limitations"):
-`trace_get_services`, interactive terminal sessions, importing a discovered candidate into inventory (use the UI's Discover My Network flow for that — it needs an explicit per-candidate choice, which doesn't fit a single tool call well), VM/container provisioning, Windows/WinRM or Docker API management.
+interactive terminal sessions, importing a discovered candidate into inventory (use the UI's Discover My Network flow for that — it needs an explicit per-candidate choice, which doesn't fit a single tool call well), VM/container provisioning, Windows/WinRM or Docker API management, Docker container inspection, SFTP, HTTP/DNS/TLS website diagnostics.
 
 ## Setup
 
@@ -128,7 +140,7 @@ Not implemented (see the root README's "Current limitations"):
 - **Verified in this repo's test suite**: the MCP protocol wiring itself —
   `src/server.integration.spec.ts` connects a real `@modelcontextprotocol/sdk`
   `Client` to this server over the SDK's in-memory transport (the same
-  protocol layer Claude Code's MCP integration uses), lists all 20 tools
+  protocol layer Claude Code's MCP integration uses), lists all 21 tools
   (tool discovery), calls several of them end to end including the
   approval-gated ones (confirming they pass through the backend's
   `{pending: true, ...}` response rather than claiming success), and
@@ -145,8 +157,28 @@ Not implemented (see the root README's "Current limitations"):
   error, not a crash) when `TRACE_MCP_READ_ONLY=true`. `claude mcp list`
   reported **✔ Connected**. This predates the approval-gating and the 4
   new tools added since — see the next line.
-- **Verified live (this session), over real HTTP, without a real MCP
-  client**: with a real running API and a real service token, confirmed
+- **Verified live (TRACE v0.5), through this exact already-`claude mcp
+  add`-registered session's real stdio connection**: `trace_perform_action`
+  against a real disposable SSH container, both a benign `package_install`
+  and a command-injection attempt in `params` — both correctly came back
+  `{ pending: true, ... }`, never executed, and the pending action's
+  stored `toolInput` preserved the exact unaltered params for a human
+  reviewer. `trace_get_health`/`trace_list_devices`/`trace_get_device`
+  against the same real device. **`trace_run_diagnostic` itself was
+  *not* exercised through this live stdio connection** — the bridge
+  process was already running (spawned by `claude mcp add` before this
+  tool existed) and needs a reconnect (`/mcp`, or restarting Claude Code)
+  to pick up the rebuilt `dist/index.js`; it was instead verified over
+  raw HTTP with the same bearer token the bridge itself would use,
+  against the real container (`os_info`, `security_posture`,
+  `firewall_rules`, injection rejection, a clean 404 for an unknown
+  device, a clean 502 for an unreachable one) — see
+  `docs/ARCHITECTURE.md`'s "Known limitations" for what that live run
+  also found (a sshd-config check gap, a firewall-tool-missing gap, a
+  non-systemd-init gap).
+- **Verified live (an earlier session this phase), over real HTTP,
+  without a real MCP client**: with a real running API and a real
+  service token, confirmed
   (a) an unauthenticated request still gets 401, (b) the MCP actor gets
   403 from the browser-only `/infra/mcp/status` and `/infra/ai/pending-actions`
   endpoints, (c) `TRACE_MCP_READ_ONLY=true` still blocks a POST to the

@@ -99,6 +99,33 @@ export class CredentialsService {
     return { protocol, payload };
   }
 
+  /** Persists an SSH host key's fingerprint into the credential that
+   * produced it, so `SshConnector`'s trust-on-first-use pin survives an
+   * API restart instead of re-trusting on every process start — see
+   * `HealthResult.newlyPinnedHostKeyFingerprint`. Never overwrites an
+   * existing fingerprint silently: that would defeat the entire point
+   * of pinning, so a credential that already has one is left untouched. */
+  async recordHostKeyFingerprint(environmentId: string, deviceId: string, protocol: ConnectorCredential["protocol"], fingerprint: string): Promise<void> {
+    const credential = await this.prisma.infraCredential.findFirst({
+      where: { environmentId, protocol, OR: [{ deviceId }, { deviceId: null }] },
+      orderBy: [{ deviceId: "desc" }, { createdAt: "desc" }],
+    });
+    if (!credential) return;
+
+    const masterKey = await this.masterKeyStore.getKey();
+    const payload = decryptSecret(
+      { encryptedPayload: credential.encryptedPayload, iv: credential.iv, authTag: credential.authTag },
+      masterKey,
+    );
+    if (payload.hostKeyFingerprint) return; // already pinned — never silently replace it
+
+    const encrypted = encryptSecret({ ...payload, hostKeyFingerprint: fingerprint }, masterKey);
+    await this.prisma.infraCredential.update({
+      where: { id: credential.id },
+      data: { encryptedPayload: encrypted.encryptedPayload, iv: encrypted.iv, authTag: encrypted.authTag },
+    });
+  }
+
   private toMetadata(credential: { id: string; environmentId: string; deviceId: string | null; label: string; protocol: string; createdAt: Date; updatedAt: Date }) {
     return {
       id: credential.id,

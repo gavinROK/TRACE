@@ -46,6 +46,10 @@ export class DevicePollingService {
     const connector = this.connectorRegistry.require(target.protocol);
     const health = await connector.getHealth(target.connectorTarget);
 
+    if (health.newlyPinnedHostKeyFingerprint) {
+      await this.credentialsService.recordHostKeyFingerprint(environmentId, deviceId, target.protocol, health.newlyPinnedHostKeyFingerprint);
+    }
+
     await this.prisma.infraDevice.update({
       where: { id: deviceId },
       data: { onlineState: health.onlineState, lastContactAt: health.onlineState === "ONLINE" ? health.checkedAt : device.lastContactAt },
