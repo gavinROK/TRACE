@@ -1,0 +1,194 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { TraceClient, TraceClientError } from "./trace-client";
+
+type ToolResult = { content: [{ type: "text"; text: string }] };
+
+/**
+ * `server.tool(...)`'s real type is a heavily-overloaded generic
+ * (`InputArgs`/`OutputArgs` conditional on `ZodRawShapeCompat |
+ * AnySchema`) — registering more than a handful of object-shaped tools
+ * against it sent `tsc` into a multi-minute (and sometimes
+ * stack-overflowing) type-inference blowup, confirmed by timing `tsc
+ * --noEmit` on this file directly (see docs/ARCHITECTURE.md "known
+ * limitations"). This narrows the one call shape every tool below
+ * actually uses to something cheap to check — the runtime behavior is
+ * identical; zod still validates every argument at runtime regardless
+ * of what TypeScript infers about it.
+ */
+type SimpleToolRegistrar = (
+  name: string,
+  description: string,
+  shape: Record<string, z.ZodTypeAny>,
+  cb: (args: Record<string, unknown>) => Promise<ToolResult>,
+) => void;
+
+type ZeroArgToolRegistrar = (name: string, description: string, cb: () => Promise<ToolResult>) => void;
+
+/** Builds the MCP server and registers TRACE's tools against the given
+ * client — kept separate from index.ts so this can be unit-tested with
+ * a fake TraceClient, without spinning up a real stdio transport. */
+export function createServer(client: TraceClient): McpServer {
+  const server = new McpServer({ name: "trace-mcp", version: "0.1.0" });
+  const registerTool = server.tool.bind(server) as unknown as SimpleToolRegistrar;
+  const registerZeroArgTool = server.tool.bind(server) as unknown as ZeroArgToolRegistrar;
+
+  registerZeroArgTool("trace_list_environments", "List every infrastructure environment TRACE knows about.", async () =>
+    jsonResult(await guarded(() => client.listEnvironments())),
+  );
+
+  registerTool(
+    "trace_list_devices",
+    "List every enrolled/discovered device in one environment.",
+    { environmentId: z.string() },
+    async ({ environmentId }) => jsonResult(await guarded(() => client.listDevices(environmentId as string))),
+  );
+
+  registerTool(
+    "trace_get_topology",
+    "Get the device topology (nodes + verified/inferred relationship edges) for an environment.",
+    { environmentId: z.string() },
+    async ({ environmentId }) => jsonResult(await guarded(() => client.getTopology(environmentId as string))),
+  );
+
+  registerTool(
+    "trace_get_device",
+    "Get full detail for one device, including its capabilities and recent metrics.",
+    { environmentId: z.string(), deviceId: z.string() },
+    async ({ environmentId, deviceId }) =>
+      jsonResult(await guarded(() => client.getDevice(environmentId as string, deviceId as string))),
+  );
+
+  registerTool(
+    "trace_get_capabilities",
+    "Get only the supported capabilities (protocol + operation) for one device.",
+    { environmentId: z.string(), deviceId: z.string() },
+    async ({ environmentId, deviceId }) => {
+      const device = await guarded(() => client.getDevice(environmentId as string, deviceId as string));
+      return jsonResult(device.capabilities);
+    },
+  );
+
+  registerTool(
+    "trace_get_health",
+    "Actively check a device's reachability right now (read-only; safe to call freely).",
+    { environmentId: z.string(), deviceId: z.string() },
+    async ({ environmentId, deviceId }) =>
+      jsonResult(await guarded(() => client.checkHealth(environmentId as string, deviceId as string))),
+  );
+
+  registerTool(
+    "trace_get_metrics",
+    "Get historical metric samples for a device (optionally filtered by kind, e.g. CPU_UTILIZATION).",
+    {
+      environmentId: z.string(),
+      deviceId: z.string(),
+      kind: z.string().optional(),
+      sinceMinutes: z.number().optional(),
+    },
+    async ({ environmentId, deviceId, kind, sinceMinutes }) =>
+      jsonResult(
+        await guarded(() =>
+          client.getMetrics(environmentId as string, deviceId as string, kind as string | undefined, sinceMinutes as number | undefined),
+        ),
+      ),
+  );
+
+  registerTool(
+    "trace_get_logs",
+    "Get the environment's audit log (logins, credential changes, commands run, actions performed).",
+    { environmentId: z.string(), limit: z.number().optional() },
+    async ({ environmentId, limit }) =>
+      jsonResult(await guarded(() => client.getLogs(environmentId as string, limit as number | undefined))),
+  );
+
+  registerTool(
+    "trace_execute_command",
+    "Run a shell command on one device over SSH. Requires the device to have an SSH credential enrolled.",
+    {
+      environmentId: z.string(),
+      deviceName: z.string(),
+      command: z.string(),
+      timeoutMs: z.number().optional(),
+    },
+    async ({ environmentId, deviceName, command, timeoutMs }) =>
+      jsonResult(
+        await guarded(() =>
+          client.executeCommand(environmentId as string, deviceName as string, command as string, timeoutMs as number | undefined),
+        ),
+      ),
+  );
+
+  registerTool(
+    "trace_execute_group_command",
+    "Run a shell command across multiple devices with bounded concurrency. Running against more than one device requires confirm: true.",
+    {
+      environmentId: z.string(),
+      deviceNames: z.array(z.string()),
+      command: z.string(),
+      timeoutMs: z.number().optional(),
+      confirm: z.boolean().optional(),
+    },
+    async ({ environmentId, deviceNames, command, timeoutMs, confirm }) =>
+      jsonResult(
+        await guarded(() =>
+          client.executeGroupCommand(
+            environmentId as string,
+            deviceNames as string[],
+            command as string,
+            timeoutMs as number | undefined,
+            confirm as boolean | undefined,
+          ),
+        ),
+      ),
+  );
+
+  registerTool(
+    "trace_perform_action",
+    "Perform a management action on a device (e.g. start/stop/reboot a Proxmox VM). Destructive actions (stop, shutdown, reboot) require confirm: true.",
+    {
+      environmentId: z.string(),
+      deviceId: z.string(),
+      action: z.string(),
+      confirm: z.boolean().optional(),
+      params: z.record(z.unknown()).optional(),
+    },
+    async ({ environmentId, deviceId, action, confirm, params }) =>
+      jsonResult(
+        await guarded(() =>
+          client.performAction(
+            environmentId as string,
+            deviceId as string,
+            action as string,
+            confirm as boolean | undefined,
+            params as Record<string, unknown> | undefined,
+          ),
+        ),
+      ),
+  );
+
+  registerTool(
+    "trace_get_operation_status",
+    "Get the status/result of a previously started command run (from trace_execute_command).",
+    { environmentId: z.string(), runId: z.string() },
+    async ({ environmentId, runId }) =>
+      jsonResult(await guarded(() => client.getOperationStatus(environmentId as string, runId as string))),
+  );
+
+  return server;
+}
+
+async function guarded<T>(fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    if (error instanceof TraceClientError) {
+      throw new Error(`TRACE API error (${error.status}): ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+function jsonResult(data: unknown): ToolResult {
+  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
+}

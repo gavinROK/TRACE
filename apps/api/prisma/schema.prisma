@@ -336,3 +336,321 @@ model SoftwareInstallation {
   @@index([deviceId])
   @@map("software_installations")
 }
+
+// ---------------------------------------------------------------------------
+// Infrastructure control plane.
+//
+// A deliberately separate domain from Organization/Department/Developer/
+// Device above (the "developer intelligence" product) — an InfraDevice is a
+// piece of infrastructure (a hypervisor, a switch, a VM) discovered and
+// administered through a connector, not an employee's laptop. The two
+// domains share nothing but the Prisma client and the NestJS process; see
+// docs/ARCHITECTURE.md.
+// ---------------------------------------------------------------------------
+
+/// A top-level tenant/boundary for infrastructure: separate devices,
+/// credentials, metrics, and audit history per environment (e.g. "Gavin's
+/// Home Infrastructure" vs. a future "Customer Infrastructure"). Unrelated
+/// to Organization above — that model is the developer-intelligence
+/// tenant, this is the infrastructure one.
+model InfraEnvironment {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+
+  devices      InfraDevice[]
+  credentials  InfraCredential[]
+  commandRuns  InfraCommandRun[]
+  auditEntries InfraAuditLogEntry[]
+  relationships InfraRelationship[]
+
+  @@map("infra_environments")
+}
+
+enum InfraDeviceCategory {
+  PHYSICAL_SERVER
+  VIRTUAL_MACHINE
+  CONTAINER
+  ROUTER
+  FIREWALL
+  MANAGED_SWITCH
+  NAS
+  STORAGE_DEVICE
+  PRINTER
+  KVM
+  WORKSTATION
+  GENERIC_NETWORK_DEVICE
+}
+
+/// A management protocol TRACE can reach a device through. Listing one
+/// here is a capability claim the backend must actually implement a
+/// connector for (see infra/connectors) — the frontend is only allowed to
+/// show controls backed by a protocol the device actually reports.
+enum InfraManagementProtocol {
+  SSH
+  PROXMOX_API
+  SNMP_V3
+  VENDOR_API
+  WINDOWS_WINRM
+  DOCKER_API
+  NONE
+}
+
+enum InfraEnrollmentStatus {
+  /// Seen by discovery, not yet enrolled — no credentials attached.
+  DISCOVERED
+  /// Enrolled with credentials, but TRACE has not yet verified it can
+  /// actually connect.
+  PENDING
+  /// At least one successful connector call has succeeded.
+  ENROLLED
+  ENROLLMENT_FAILED
+  DISABLED
+}
+
+enum InfraOnlineState {
+  /// No reachability check has ever succeeded or failed for this device.
+  /// Distinct from OFFLINE — absence of a signal is not evidence of
+  /// being down.
+  UNKNOWN
+  ONLINE
+  OFFLINE
+}
+
+/// The unified device model (PRODUCT_SPEC.md section 5). One row per
+/// discovered or manually-enrolled infrastructure asset.
+model InfraDevice {
+  id              String               @id @default(cuid())
+  environment     InfraEnvironment     @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId   String
+  name            String
+  category        InfraDeviceCategory
+  manufacturer    String?
+  model           String?
+  operatingSystem String?
+  osVersion       String?
+  ipAddresses     String[]
+  macAddresses    String[]
+  managementProtocols InfraManagementProtocol[]
+  enrollmentStatus InfraEnrollmentStatus @default(DISCOVERED)
+  onlineState     InfraOnlineState     @default(UNKNOWN)
+  lastContactAt   DateTime?
+  notes           String?
+  discoveredAt    DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  /// For a VM/container, the hypervisor or host it runs on. Null for
+  /// anything that is not virtualized.
+  parentDevice    InfraDevice?  @relation("InfraDeviceParent", fields: [parentDeviceId], references: [id], onDelete: SetNull)
+  parentDeviceId  String?
+  children        InfraDevice[] @relation("InfraDeviceParent")
+
+  credentials      InfraCredential[]
+  metricSamples    InfraMetricSample[]
+  commandRuns      InfraCommandRun[]
+  relationshipsFrom InfraRelationship[] @relation("InfraRelationshipFrom")
+  relationshipsTo   InfraRelationship[] @relation("InfraRelationshipTo")
+
+  @@unique([environmentId, name])
+  @@index([environmentId])
+  @@index([parentDeviceId])
+  @@map("infra_devices")
+}
+
+enum InfraRelationshipKind {
+  /// Observed directly by a connector (e.g. Proxmox reporting a VM's
+  /// host, or LLDP/SNMP reporting a switch port's neighbor).
+  VERIFIED
+  /// A best-effort guess (e.g. "on the same subnet") that a human should
+  /// confirm or correct — never rendered the same as VERIFIED.
+  INFERRED
+}
+
+enum InfraRelationshipType {
+  HOSTS
+  CONNECTED_TO
+  DEPENDS_ON
+}
+
+model InfraRelationship {
+  id            String                 @id @default(cuid())
+  environment   InfraEnvironment       @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId String
+  fromDevice    InfraDevice            @relation("InfraRelationshipFrom", fields: [fromDeviceId], references: [id], onDelete: Cascade)
+  fromDeviceId  String
+  toDevice      InfraDevice            @relation("InfraRelationshipTo", fields: [toDeviceId], references: [id], onDelete: Cascade)
+  toDeviceId    String
+  type          InfraRelationshipType
+  kind          InfraRelationshipKind  @default(INFERRED)
+  notes         String?
+  createdAt     DateTime               @default(now())
+
+  @@unique([fromDeviceId, toDeviceId, type])
+  @@index([environmentId])
+  @@map("infra_relationships")
+}
+
+/// A secret (SSH key passphrase, Proxmox API token, SNMPv3 auth/priv
+/// keys, ...) encrypted at rest with AES-256-GCM. The key never touches
+/// this table in plaintext; see infra/credentials/secret-cipher.ts. The
+/// master encryption key itself lives outside Postgres (macOS Keychain in
+/// local dev — see infra/credentials/master-key.store.ts), so a database
+/// dump alone is never enough to recover a credential.
+model InfraCredential {
+  id               String                   @id @default(cuid())
+  environment      InfraEnvironment         @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId    String
+  device           InfraDevice?             @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId         String?
+  label            String
+  protocol         InfraManagementProtocol
+  encryptedPayload String
+  iv               String
+  authTag          String
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  @@index([environmentId])
+  @@index([deviceId])
+  @@map("infra_credentials")
+}
+
+enum InfraMetricKind {
+  CPU_UTILIZATION
+  MEMORY_UTILIZATION
+  DISK_UTILIZATION
+  NETWORK_RX_THROUGHPUT
+  NETWORK_TX_THROUGHPUT
+  UPTIME_SECONDS
+  /// Absolute byte figures, alongside the _UTILIZATION percentages
+  /// above — the dashboard's aggregate memory/storage capacity (section
+  /// 8) sums these across hosts, which a bare percentage can't support
+  /// (averaging percentages across differently-sized hosts is simply
+  /// wrong). Still always a real reading from the connector, same as
+  /// every other metric kind — never derived or estimated.
+  MEMORY_USED_BYTES
+  MEMORY_TOTAL_BYTES
+  DISK_USED_BYTES
+  DISK_TOTAL_BYTES
+  CUSTOM
+}
+
+/// One collected telemetry point. Always has a real `collectedAt` from
+/// the moment the connector actually took the reading — never backfilled
+/// or interpolated (see docs/ARCHITECTURE.md "no fabricated metrics").
+model InfraMetricSample {
+  id          String           @id @default(cuid())
+  device      InfraDevice      @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId    String
+  kind        InfraMetricKind
+  label       String?
+  value       Float
+  unit        String
+  collectedAt DateTime         @default(now())
+
+  @@index([deviceId, kind, collectedAt])
+  @@map("infra_metric_samples")
+}
+
+enum InfraCommandStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  TIMED_OUT
+  CANCELLED
+}
+
+/// One command-console invocation against one device. `targetLabel`
+/// duplicates the resolved device name at run time so the audit trail
+/// stays legible even if the device is later renamed or deleted.
+model InfraCommandRun {
+  id            String              @id @default(cuid())
+  environment   InfraEnvironment    @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId String
+  device        InfraDevice?        @relation(fields: [deviceId], references: [id], onDelete: SetNull)
+  deviceId      String?
+  targetLabel   String
+  command       String
+  status        InfraCommandStatus  @default(PENDING)
+  exitCode      Int?
+  stdout        String?
+  stderr        String?
+  requestedBy   String
+  startedAt     DateTime?
+  finishedAt    DateTime?
+  timeoutMs     Int?
+  createdAt     DateTime            @default(now())
+
+  @@index([environmentId, createdAt])
+  @@index([deviceId])
+  @@map("infra_command_runs")
+}
+
+/// General security/audit trail, separate from InfraCommandRun — covers
+/// logins, credential changes, and performAction() calls (start/stop a
+/// VM, etc.), not just console command execution.
+model InfraAuditLogEntry {
+  id            String            @id @default(cuid())
+  environment   InfraEnvironment? @relation(fields: [environmentId], references: [id], onDelete: SetNull)
+  environmentId String?
+  actor         String
+  action        String
+  targetType    String?
+  targetId      String?
+  outcome       String
+  detail        Json?
+  createdAt     DateTime          @default(now())
+
+  @@index([environmentId, createdAt])
+  @@map("infra_audit_log_entries")
+}
+
+/// The single TRACE operator account. Deliberately just one row per
+/// deployment for v1 (PRODUCT_SPEC.md section 14: "design for future
+/// multi-user access without unnecessarily complicating the initial
+/// single-user deployment") — environment-scoped data already isolates
+/// per-tenant without a user/role join table that nothing uses yet.
+model TraceUser {
+  id                  String               @id @default(cuid())
+  email               String               @unique
+  passwordHash        String?
+  createdAt           DateTime             @default(now())
+  webauthnCredentials WebauthnCredential[]
+  sessions            TraceSession[]
+
+  @@map("trace_users")
+}
+
+/// A registered WebAuthn authenticator (e.g. a YubiKey). `counter` is the
+/// authenticator's signature counter, used to detect cloned credentials —
+/// a verified assertion whose counter did not increase is rejected.
+model WebauthnCredential {
+  id           String        @id @default(cuid())
+  user         TraceUser     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId       String
+  credentialId String        @unique
+  publicKey    String
+  counter      BigInt        @default(0)
+  transports   String[]
+  deviceLabel  String?
+  createdAt    DateTime      @default(now())
+
+  @@map("webauthn_credentials")
+}
+
+/// Only `tokenHash` (sha256 of the session cookie value) is stored — the
+/// raw session token exists only in the client's cookie, same pattern as
+/// ApiKey.hashedKey above.
+model TraceSession {
+  id        String    @id @default(cuid())
+  user      TraceUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  tokenHash String    @unique
+  createdAt DateTime  @default(now())
+  expiresAt DateTime
+
+  @@map("trace_sessions")
+}

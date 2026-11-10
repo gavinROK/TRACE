@@ -31,9 +31,13 @@ async function bootstrap() {
     }),
   );
 
-  // Phase 1 of the backend: the frontend is a separate origin in local dev.
-  // This will narrow to an explicit allowlist once real auth is added.
-  app.enableCors();
+  // The infra auth module (TraceAccessGuard) is cookie-based, so the
+  // frontend's cross-origin requests need `credentials: true` — which
+  // CORS forbids combining with a wildcard origin, hence the explicit
+  // allowlist (narrowing the Phase 1 "allow everything" placeholder
+  // this replaces, now that real auth exists).
+  const webOrigin = process.env.TRACE_WEB_ORIGIN ?? "http://localhost:3000";
+  app.enableCors({ origin: webOrigin, credentials: true });
 
   const port = Number(process.env.PORT ?? 4000);
   await app.listen(port);

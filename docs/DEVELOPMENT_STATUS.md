@@ -1,6 +1,6 @@
 # TRACE Development Status
 
-Last updated: 2026-10-19 (autonomous engineering session, branch `feature/backend-foundation`)
+Last updated: 2026-11-09 (autonomous engineering session, branch `feature/infrastructure-control-plane`)
 
 This document is the single source of truth for what exists, what's in
 progress, and what's next. Read this first in any new session before making
@@ -135,10 +135,137 @@ medium orgs. Preserving everything above; this phase is additive.
 This list is updated as each item lands; see the detailed log below for
 what's actually been verified so far.
 
-## Detailed log
+## Phase 3 — Infrastructure control plane (new product direction)
 
-Entries are appended chronologically, newest first. Each entry says exactly
-what was verified and how.
+TRACE is expanding again: alongside the developer-intelligence product
+above (untouched), it now also discovers, enrolls, monitors, and
+administers real infrastructure (homelab servers, VMs, switches,
+printers, …) as a separate domain under `apps/api/src/infra` and
+`apps/web/app/infra`. See `docs/ARCHITECTURE.md` for the module map,
+security model, and the complete "known limitations" list — this entry
+only covers what changed and what was verified.
+
+- [x] Unified device model, environments, capabilities — `InfraDevice`/
+      `InfraEnvironment`/`InfraRelationship` et al. (new Prisma models,
+      two migrations generated via the existing `migrate diff`
+      declarative-schema workaround, since there is still no live
+      Postgres in this environment to run `migrate dev` against).
+- [x] Real connectors: SSH (`ssh2`), Proxmox API (`node:https`, token
+      auth, discovery + health + metrics + start/stop/shutdown/reboot),
+      SNMPv3 read-only (`net-snmp`). Each is genuinely functional code —
+      point it at a real device with real credentials and it will work —
+      but none has run against real infrastructure in this environment
+      (see "What's tested" in the root README).
+- [x] Credential encryption (AES-256-GCM) with the master key stored in
+      the macOS Keychain, not the database.
+- [x] Auth: password login + session cookies, plus WebAuthn (YubiKey)
+      registration/assertion — unit-tested against a mocked
+      `@simplewebauthn/server`, never against real browser+hardware (see
+      limitations).
+- [x] Command console backend: device-name resolution (ambiguity-proof
+      by schema constraint), bounded-concurrency group execution,
+      timeouts, cancellation via `AbortSignal`, full history
+      (`InfraCommandRun`) and audit logging.
+- [x] Discovery: local interfaces/ARP/ping/optional-nmap (real, runs
+      against whatever machine TRACE itself is running on), and
+      Proxmox-driven VM/container enumeration that upserts into the
+      topology without deleting anything already enrolled.
+- [x] Monitoring: a scheduled poller (`@nestjs/schedule`) plus an
+      on-demand "check health" action, both going through the same
+      `DevicePollingService` so they can never disagree.
+- [x] MCP server (`packages/mcp-server`) exposing 12 tools, each a thin
+      call into TRACE's own REST API — no duplicate management logic.
+- [x] Frontend: an `/infra` route (setup/login, environment picker,
+      dashboard summary, a React Flow topology view, a device detail
+      panel, and a command console drawer), kept entirely separate from
+      the existing `/` developer-intelligence graph (a small nav badge
+      links the two).
+- [x] Seed script (`prisma/seed-infra.ts`) for "Gavin's Home
+      Infrastructure" using only the hardware facts given directly in
+      the product brief (Beelink SER9 MAX's CPU/RAM/storage, ZimaBoard 2,
+      NETGEAR GS108T, JetKVM, Bambu Lab P2S) — no invented IP addresses,
+      credentials, or live metrics; every device starts
+      DISCOVERED/UNKNOWN with no management protocols until real
+      credentials are enrolled.
+
+**Two real, reproducible bugs found and fixed while verifying this
+actually runs (not just compiles) — neither would have been caught by
+`tsc`/Jest alone:**
+
+1. **The compiled server crashed on boot** (`node dist/main.js`) with
+   "No driver (HTTP) has been selected... install @nestjs/platform-express"
+   — even though that package was installed. Root cause: npm's workspace
+   hoisting placed `@nestjs/core`/`common` in the repo root's
+   `node_modules` while leaving `@nestjs/platform-express`/`config`/
+   `schedule` nested in `apps/api/node_modules` — two different trees,
+   which breaks NestJS's internal package loader (it `require()`s
+   sibling `@nestjs/*` packages relative to its own install location).
+   `tsc --noEmit` and Jest never noticed, because they resolve modules
+   differently than Nest's loader does. Fixed by declaring those
+   packages directly in the **root** `package.json` so npm hoists all of
+   them to the same place; re-verified by actually booting the compiled
+   server again — it now gets past every module/route registration and
+   fails only at `PrismaClientInitializationError: Can't reach database
+   server at localhost:5433`, i.e. the one real remaining gap (no live
+   Postgres here), not an application-wiring bug. See
+   `docs/ARCHITECTURE.md` "Known limitations" for the exact fix, in case
+   a future `@nestjs/*` addition reintroduces it.
+2. **`@modelcontextprotocol/sdk`'s `server.tool()` sent `tsc` into a
+   multi-minute, sometimes stack-overflowing type-inference loop** once
+   more than a few object-schema tools were registered in one file
+   (confirmed by timing `tsc --noEmit` directly on that one file, and by
+   reproducing the exact same hang under Jest). Fixed with one type
+   assertion narrowing the call shape TRACE actually uses (see
+   `packages/mcp-server/src/server.ts`'s top comment) — runtime behavior,
+   including zod validation, is unaffected; confirmed by the MCP
+   integration test below actually passing afterward.
+
+**Also found and fixed in passing:** `@nestjs/schedule`'s and
+`@nestjs/mapped-types`' current npm releases ship ESM-only, which a
+CommonJS-compiled NestJS app cannot `require()` — pinned `@nestjs/schedule`
+to `6.1.3` (last CommonJS release) and hand-wrote `UpdateInfraDeviceDto`
+instead of using `PartialType` from `mapped-types`. Caught by a new
+`infra.module.spec.ts` test that resolves the entire infra dependency
+graph via Nest's `TestingModule` — this is also what caught bug #1 above
+being possible in the first place (it's what pointed at the ESM-require
+failures one module import at a time).
+
+**Verified:**
+- Backend: 198 Jest tests (up from 101) across every new service,
+  including all three connectors against mocked transports (`ssh2`,
+  `node:https`, `net-snmp`), the credential cipher and Keychain-backed
+  master key store (mocked `child_process`), the WebAuthn/password auth
+  flow, the command-execution engine's bounded-concurrency and
+  per-device-failure-isolation behavior (one bug found and fixed there,
+  see below), and `infra.module.spec.ts`'s full dependency-graph
+  resolution. `tsc --noEmit`, ESLint, and `npm run build` all clean.
+- **The compiled server actually boots and maps every route** (verified
+  directly, not inferred from a passing build) — see bug #1 above for
+  exactly how far that got and where it stopped (no live Postgres here).
+- **A real end-to-end MCP protocol test**: a genuine
+  `@modelcontextprotocol/sdk` `Client` (the same class Claude Code's own
+  MCP integration uses) connects to the real server over the SDK's
+  in-memory transport, lists all 12 tools, and calls several — only the
+  HTTP layer underneath is faked, since there's no live TRACE API in
+  this environment.
+- `apps/web`: `tsc --noEmit` and ESLint clean. `next build` via webpack
+  succeeds (Turbopack's build hit a sandbox-specific port-binding
+  restriction unrelated to any code here — see "Known limitations";
+  verify `next build`'s default Turbopack path on your own machine).
+- **A real bug found while testing the console's group-execution path**:
+  one unresolvable device name in a `trace exec --group` call would
+  reject the *entire* batch instead of just that device, because
+  `CommandExecutionService.executeOnGroup` passed `resolveByName`'s
+  rejection straight through `runWithConcurrency`'s `Promise.all`. Fixed
+  by catching per-device-name failures inside the group worker and
+  synthesizing a `FAILED` run record for that one device, leaving the
+  rest of the batch unaffected — caught by a test, not by running it
+  live.
+- **Not verified**: anything against real infrastructure (no live
+  Postgres, no reachable Beelink/Proxmox/switch from this environment —
+  see the root README's "What's tested" for the exact, honest split), the
+  WebAuthn ceremony against a real browser + YubiKey, and registering
+  the MCP server with an actual Claude Code CLI session.
 
 ### Product evaluation: realistic 50-person org, bug fixes, security review
 
