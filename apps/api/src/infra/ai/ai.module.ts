@@ -10,6 +10,7 @@ import { InfraDevicesModule } from "../devices/devices.module";
 import { DiscoveryModule } from "../discovery/discovery.module";
 import { EnvironmentsModule } from "../environments/environments.module";
 import { MonitoringModule } from "../monitoring/monitoring.module";
+import { DeviceOnboardingModule } from "../onboarding/device-onboarding.module";
 import { TopologyModule } from "../topology/topology.module";
 import { ApprovalsModule } from "../approvals/approvals.module";
 import { AiChatService } from "./ai-chat.service";
@@ -47,6 +48,7 @@ import { AnthropicProviderService } from "./providers/anthropic-provider.service
     ActionsModule,
     DiscoveryModule,
     ApprovalsModule,
+    DeviceOnboardingModule,
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 60 }]),
   ],
   controllers: [AiController],

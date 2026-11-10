@@ -69,4 +69,26 @@ describe("TraceClient", () => {
     );
     expect(result).toEqual({ status: "AUTHORIZED", secondsRemaining: 240 });
   });
+
+  it("onboardDevice posts ip/name/category to the configure endpoint", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ pending: true, pendingActionId: "pa1" }) });
+
+    await client.onboardDevice("env1", "192.168.0.1", "Router", "ROUTER");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/infra/environments/env1/onboarding/configure",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ ip: "192.168.0.1", name: "Router", category: "ROUTER" }) }),
+    );
+  });
+
+  it("verifyDeviceOnboarding posts to the per-device verify endpoint with no body", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ ready: true, onlineState: "ONLINE" }) });
+
+    await client.verifyDeviceOnboarding("env1", "d1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/infra/environments/env1/onboarding/d1/verify",
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
 });

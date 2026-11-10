@@ -28,7 +28,7 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
     return client;
   }
 
-  it("lists all registered tools — tool discovery, matching PRODUCT_SPEC.md section 11 plus TRACE v0.4/v0.5's additions", async () => {
+  it("lists all registered tools — tool discovery, matching PRODUCT_SPEC.md section 11 plus TRACE v0.4/v0.5/v0.6's additions", async () => {
     const client = await connectedClient();
 
     const { tools } = await client.listTools();
@@ -51,6 +51,7 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
         "trace_list_devices",
         "trace_list_environments",
         "trace_list_unenrolled_devices",
+        "trace_onboard_device",
         "trace_perform_action",
         "trace_diagnose_device",
         "trace_detect_local_network",
@@ -58,6 +59,7 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
         "trace_request_credential_enrollment",
         "trace_update_device",
         "trace_run_diagnostic",
+        "trace_verify_device_onboarding",
       ].sort(),
     );
   });
@@ -214,6 +216,49 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
       expect(parsed.status).toBe("AUTHORIZED");
       expect(parsed.secondsRemaining).toBe(212);
       expect(text).not.toMatch(/password|secret|privateKey/i);
+    });
+  });
+
+  describe("TRACE v0.6 — device onboarding is approval-gated for configuration, ungated for verification", () => {
+    it("trace_onboard_device never executes immediately — it passes through the backend's pending-approval response as-is", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ pending: true, pendingActionId: "pa4", classification: "ADMINISTRATIVE", message: "Requires human approval." }),
+      });
+      const client = await connectedClient();
+
+      const result = await client.callTool({
+        name: "trace_onboard_device",
+        arguments: { environmentId: "env1", ip: "192.168.0.1", name: "Router", category: "ROUTER" },
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:4000/infra/environments/env1/onboarding/configure",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ ip: "192.168.0.1", name: "Router", category: "ROUTER" }) }),
+      );
+      const parsed = JSON.parse((result.content as Array<{ type: string; text: string }>)[0].text);
+      expect(parsed.pending).toBe(true);
+      expect(parsed.pendingActionId).toBe("pa4");
+    });
+
+    it("trace_verify_device_onboarding calls the verify endpoint directly — no pending-approval wrapper", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ ready: true, onlineState: "ONLINE", enrollmentStatus: "ENROLLED", monitoringEligible: true }),
+      });
+      const client = await connectedClient();
+
+      const result = await client.callTool({ name: "trace_verify_device_onboarding", arguments: { environmentId: "env1", deviceId: "d1" } });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:4000/infra/environments/env1/onboarding/d1/verify",
+        expect.objectContaining({ method: "POST" }),
+      );
+      const parsed = JSON.parse((result.content as Array<{ type: string; text: string }>)[0].text);
+      expect(parsed.enrollmentStatus).toBe("ENROLLED");
+      expect(parsed.monitoringEligible).toBe(true);
     });
   });
 

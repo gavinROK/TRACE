@@ -119,6 +119,40 @@ export class InfraDevicesService {
     return this.toSummary(device);
   }
 
+  /**
+   * The *only* place `enrollmentStatus` ever becomes `ENROLLED` —
+   * deliberately not exposed through `UpdateInfraDeviceDto` (so neither
+   * a browser PATCH nor an MCP `update_device` call can claim a device
+   * is enrolled without one). Called only by
+   * `device-onboarding.service.ts`'s `verify()`, and only immediately
+   * after a real connector health check actually came back ONLINE —
+   * this is what makes `MetricsSchedulerService.pollAllEnrolledDevices`
+   * (monitoring/metrics-scheduler.service.ts) start polling this device
+   * at all, since it only ever selects `enrollmentStatus: "ENROLLED"`
+   * rows. Idempotent: re-verifying an already-enrolled device is a
+   * no-op, not a second audit entry.
+   */
+  async markEnrolled(environmentId: string, deviceId: string, actor: string) {
+    const device = await this.findOrThrow(environmentId, deviceId);
+    if (device.enrollmentStatus === "ENROLLED") return this.toSummary(device);
+
+    const updated = await this.prisma.infraDevice.update({
+      where: { id: deviceId },
+      data: { enrollmentStatus: "ENROLLED" },
+      ...WITH_RELATIONS,
+    });
+    await this.auditLog.record({
+      environmentId,
+      actor,
+      action: "device.enrollment-status.enrolled",
+      targetType: "InfraDevice",
+      targetId: deviceId,
+      outcome: "success",
+      detail: { previousStatus: device.enrollmentStatus },
+    });
+    return this.toSummary(updated);
+  }
+
   async remove(environmentId: string, deviceId: string): Promise<void> {
     await this.findOrThrow(environmentId, deviceId);
     await this.prisma.infraDevice.delete({ where: { id: deviceId } });

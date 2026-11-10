@@ -201,7 +201,7 @@ re-verified against a real Claude Code/Desktop process since** — see
 exactly what has and hasn't been exercised live.
 
 See [`packages/mcp-server/README.md`](packages/mcp-server/README.md) for
-the full 22-tool list and setup steps (Claude Code **and** Claude
+the full 24-tool list and setup steps (Claude Code **and** Claude
 Desktop). In short:
 
 ```bash
@@ -247,6 +247,28 @@ and creates nothing — not even a pending action. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)'s "Temporary credential
 enrollment" section for the full flow and why the secret can never
 reach this conversation.
+
+**Device onboarding orchestration (v0.6)**: ask Claude "set up my
+router" and it can run the whole chain itself: `trace_onboard_device`
+(probes a curated set of management ports, imports/dedupes the device,
+sets protocol candidates a connector actually exists for — one human
+approval, bound to the exact IP/name/category proposed) →
+`trace_request_credential_enrollment` if nothing's enrolled yet (same
+v0.5 flow above — the secret still only ever goes in through TRACE's
+own device panel) → `trace_verify_device_onboarding` (no approval
+needed; runs a real connectivity test and only marks the device
+`ENROLLED` — which is what makes TRACE's scheduled polling start
+covering it — once that test actually succeeds). Two honest limits,
+not glossed over: an open port is only ever a *hint* toward a protocol
+to try, never a claim it's supported (SSH is never assumed from port
+22 alone); and TRACE still has no alert-threshold engine, so "monitoring
+configured" means "scheduled health/metric polling is now running,"
+not "thresholds are set." See `docs/ARCHITECTURE.md`'s "Device
+onboarding orchestration" section for the full design, including a
+real pre-existing gap this work fixed: `MetricsSchedulerService` only
+ever polled devices with `enrollmentStatus: ENROLLED`, but nothing in
+TRACE set that status before v0.6 — scheduled polling was silently
+dead for every device, onboarded or hand-configured, until now.
 
 ## Security model
 

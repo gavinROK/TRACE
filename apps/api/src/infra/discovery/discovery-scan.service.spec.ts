@@ -1,4 +1,4 @@
-import { BadRequestException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException } from "@nestjs/common";
 import { DiscoveryScanService } from "./discovery-scan.service";
 
 describe("DiscoveryScanService", () => {
@@ -8,6 +8,7 @@ describe("DiscoveryScanService", () => {
     getDefaultGateway: jest.fn(),
     listArpNeighbors: jest.fn(),
     runNmapPingSweep: jest.fn(),
+    probeTcpPort: jest.fn(),
   };
   const devicesService = { update: jest.fn(), create: jest.fn() };
   const auditLog = { record: jest.fn() };
@@ -124,6 +125,53 @@ describe("DiscoveryScanService", () => {
       expect(result.action).toBe("merged");
       expect(devicesService.create).not.toHaveBeenCalled();
       expect(devicesService.update).toHaveBeenCalledWith("env1", "existing1", "user:u1", { macAddresses: ["11:22:33:44:55:66"] });
+    });
+  });
+
+  describe("assertAuthorizedTarget", () => {
+    beforeEach(() => {
+      networkDiscovery.listLocalInterfaces.mockReturnValue([
+        { name: "en0", address: "192.168.0.126", family: "IPv4", internal: false, mac: "aa:bb:cc:dd:ee:ff", cidr: "192.168.0.126/24" },
+      ]);
+      networkDiscovery.getDefaultGateway.mockResolvedValue("192.168.0.1");
+    });
+
+    it("allows an IP within TRACE's own detected subnet", async () => {
+      await expect(service.assertAuthorizedTarget("192.168.0.1")).resolves.toBeUndefined();
+    });
+
+    it("refuses an IP outside TRACE's own detected subnet", async () => {
+      await expect(service.assertAuthorizedTarget("10.0.0.1")).rejects.toThrow(ForbiddenException);
+    });
+
+    it("refuses everything when no local subnet could be detected at all", async () => {
+      networkDiscovery.listLocalInterfaces.mockReturnValue([]);
+      networkDiscovery.getDefaultGateway.mockResolvedValue(undefined);
+
+      await expect(service.assertAuthorizedTarget("192.168.0.1")).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  describe("probeManagementPorts", () => {
+    it("probes the curated port list and reports a protocol hint per port", async () => {
+      networkDiscovery.probeTcpPort.mockImplementation(async (_ip: string, port: number) => port === 22);
+
+      const result = await service.probeManagementPorts("192.168.0.1");
+
+      expect(result).toEqual(
+        expect.arrayContaining([
+          { port: 22, open: true, protocolHint: "SSH" },
+          { port: 8006, open: false, protocolHint: "PROXMOX_API" },
+        ]),
+      );
+    });
+
+    it("never probes SNMP's port — UDP makes a TCP-connect result meaningless", async () => {
+      networkDiscovery.probeTcpPort.mockResolvedValue(false);
+
+      const result = await service.probeManagementPorts("192.168.0.1");
+
+      expect(result.some((r) => r.port === 161)).toBe(false);
     });
   });
 });

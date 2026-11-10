@@ -171,4 +171,24 @@ export class TraceClient {
   getCredentialEnrollmentStatus(environmentId: string, deviceId: string) {
     return this.request<unknown>(`/infra/environments/${environmentId}/devices/${deviceId}/credential-enrollment-sessions/active`);
   }
+
+  /** TRACE v0.6: discover-and-configure a device by IP in one call —
+   * probes a small curated port list, imports/dedupes it into
+   * inventory, and sets any protocol candidate a connector actually
+   * exists for. Never a claim of verified support; see
+   * verifyDeviceOnboarding. */
+  onboardDevice(environmentId: string, ip: string, name?: string, category?: string) {
+    return this.request<unknown>(`/infra/environments/${environmentId}/onboarding/configure`, {
+      method: "POST",
+      body: JSON.stringify({ ip, name, category }),
+    });
+  }
+
+  /** Runs a real connector health check against a device's already-
+   * stored credential and, only if it comes back ONLINE, marks the
+   * device ENROLLED so TRACE's scheduled polling picks it up. Never
+   * gated — same precedent as checkHealth/runDiagnostic. */
+  verifyDeviceOnboarding(environmentId: string, deviceId: string) {
+    return this.request<unknown>(`/infra/environments/${environmentId}/onboarding/${deviceId}/verify`, { method: "POST" });
+  }
 }

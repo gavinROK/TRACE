@@ -43,8 +43,10 @@ billing.
 | `trace_run_diagnostic` | Read-only inspection on a device: OS info, CPU/memory/disk, network interfaces, service status, system logs, process list, package inventory, firewall rules, filesystem info, or a structured security-posture assessment. SSH hosts today. | read-only |
 | `trace_request_credential_enrollment` | **Propose** a temporary 5-minute window for a human to enroll a credential — the secret never passes through this tool, this client, or TRACE's API in either direction. Disabled unless `TRACE_CREDENTIAL_ENROLLMENT_ENABLED=true`. | **approval required** |
 | `trace_get_credential_enrollment_status` | Check the status of the most recent enrollment window for a device (authorized/completed/expired/revoked). Never returns a secret. | read-only |
+| `trace_onboard_device` | **Propose** discovering + configuring a device by IP: port-probe hints, inventory import/dedupe, protocol candidates TRACE actually has a connector for. Never claims a protocol is supported just because its port is open. | **approval required** |
+| `trace_verify_device_onboarding` | Run a real connectivity test with the device's stored credential; only marks it ENROLLED (enabling scheduled polling) if that test actually succeeds. Distinguishes auth/unreachable/host-key failures on a best-effort basis. | read-only |
 
-**The five "approval required" tools never execute anything directly.**
+**The six "approval required" tools never execute anything directly.**
 Calling one creates an `AiPendingAction` row and returns
 `{ pending: true, pendingActionId, classification, message }` instead of
 a result — a human must approve it from TRACE's own web UI (Settings →

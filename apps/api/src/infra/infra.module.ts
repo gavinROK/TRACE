@@ -12,6 +12,7 @@ import { DiscoveryModule } from "./discovery/discovery.module";
 import { EnvironmentsModule } from "./environments/environments.module";
 import { McpModule } from "./mcp/mcp.module";
 import { MonitoringModule } from "./monitoring/monitoring.module";
+import { DeviceOnboardingModule } from "./onboarding/device-onboarding.module";
 import { TopologyModule } from "./topology/topology.module";
 
 /**
@@ -33,6 +34,7 @@ import { TopologyModule } from "./topology/topology.module";
     ConsoleModule,
     ActionsModule,
     MonitoringModule,
+    DeviceOnboardingModule,
     TopologyModule,
     AiModule,
     McpModule,

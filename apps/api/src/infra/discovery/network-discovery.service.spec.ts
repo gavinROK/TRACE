@@ -1,5 +1,5 @@
 import { BadRequestException } from "@nestjs/common";
-import { NetworkDiscoveryService } from "./network-discovery.service";
+import { isIpWithinCidr, NetworkDiscoveryService } from "./network-discovery.service";
 
 const execFileMock = jest.fn();
 jest.mock("node:child_process", () => ({
@@ -11,6 +11,25 @@ jest.mock("node:os", () => ({
     lo0: [{ address: "127.0.0.1", family: "IPv4", mac: "00:00:00:00:00:00", internal: true, cidr: "127.0.0.1/8" }],
   })),
 }));
+
+const createConnectionMock = jest.fn();
+jest.mock("node:net", () => ({
+  createConnection: (...args: unknown[]) => createConnectionMock(...args),
+}));
+
+function fakeSocket() {
+  const listeners: Record<string, () => void> = {};
+  return {
+    once: (event: string, cb: () => void) => {
+      listeners[event] = cb;
+    },
+    removeAllListeners: jest.fn(),
+    destroy: jest.fn(),
+    emit(event: string) {
+      listeners[event]?.();
+    },
+  };
+}
 
 function mockExecOnce(result: { stdout?: string; stderr?: string } | Error) {
   execFileMock.mockImplementationOnce((...args: unknown[]) => {
@@ -97,5 +116,67 @@ describe("NetworkDiscoveryService", () => {
     expect(hosts).toEqual(["192.168.1.1", "192.168.1.20"]);
     expect(execFileMock.mock.calls[1][0]).toBe("nmap");
     expect(execFileMock.mock.calls[1][1]).toEqual(["-sn", "192.168.1.0/24"]);
+  });
+
+  describe("probeTcpPort", () => {
+    beforeEach(() => createConnectionMock.mockReset());
+
+    it("resolves true when the socket connects", async () => {
+      const socket = fakeSocket();
+      createConnectionMock.mockReturnValue(socket);
+
+      const probe = service.probeTcpPort("192.168.1.1", 22);
+      socket.emit("connect");
+
+      await expect(probe).resolves.toBe(true);
+    });
+
+    it("resolves false on timeout rather than throwing", async () => {
+      const socket = fakeSocket();
+      createConnectionMock.mockReturnValue(socket);
+
+      const probe = service.probeTcpPort("192.168.1.1", 22);
+      socket.emit("timeout");
+
+      await expect(probe).resolves.toBe(false);
+    });
+
+    it("resolves false on a connection error (e.g. refused) rather than throwing", async () => {
+      const socket = fakeSocket();
+      createConnectionMock.mockReturnValue(socket);
+
+      const probe = service.probeTcpPort("192.168.1.1", 8006);
+      socket.emit("error");
+
+      await expect(probe).resolves.toBe(false);
+    });
+
+    it("rejects an invalid IP before ever attempting a connection", async () => {
+      await expect(service.probeTcpPort("not-an-ip", 22)).rejects.toThrow(BadRequestException);
+      expect(createConnectionMock).not.toHaveBeenCalled();
+    });
+  });
+});
+
+describe("isIpWithinCidr", () => {
+  it("returns true for an IP inside the range", () => {
+    expect(isIpWithinCidr("192.168.1.42", "192.168.1.0/24")).toBe(true);
+  });
+
+  it("returns false for an IP outside the range", () => {
+    expect(isIpWithinCidr("10.0.0.1", "192.168.1.0/24")).toBe(false);
+  });
+
+  it("respects the prefix length, not just the first three octets", () => {
+    expect(isIpWithinCidr("192.168.1.200", "192.168.1.0/25")).toBe(false);
+    expect(isIpWithinCidr("192.168.1.100", "192.168.1.0/25")).toBe(true);
+  });
+
+  it("throws for a malformed CIDR rather than silently authorizing nothing or everything", () => {
+    expect(() => isIpWithinCidr("192.168.1.1", "not-a-cidr")).toThrow();
+  });
+
+  it("returns false (not throw) for a malformed IP", () => {
+    expect(isIpWithinCidr("not-an-ip", "192.168.1.0/24")).toBe(false);
   });
 });

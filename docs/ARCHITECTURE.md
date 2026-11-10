@@ -216,7 +216,7 @@ can be removed independently without the other noticing.
 ### MCP integration (TRACE v0.4)
 
 `packages/mcp-server` is a thin MCP server (stdio transport only — no
-HTTP/SSE listener, so no new network attack surface) exposing 22 tools
+HTTP/SSE listener, so no new network attack surface) exposing 24 tools
 to any MCP client; see that package's own README for the full list and
 setup (Claude Code and Claude Desktop both use the identical
 command/args/env shape). It authenticates to TRACE's API with a fixed
@@ -324,6 +324,90 @@ ever receiving, transmitting, or storing the secret itself**:
 See `apps/api/src/infra/credentials/credential-enrollment.service.ts`
 and its spec for the full state machine.
 
+### Device onboarding orchestration (TRACE v0.6)
+
+The goal — "Claude, set up my router" should need no dashboard
+navigation beyond typing a password once — is served by composing
+services that already existed (`discovery`, `devices`, `credentials`
+v0.5, `monitoring`), not by building a parallel setup pipeline. New
+module: `apps/api/src/infra/onboarding` (`DeviceOnboardingService` +
+`DeviceOnboardingController`). It owns no storage of its own.
+
+**Two tools, not many**, split exactly where state actually changes:
+
+- **`trace_onboard_device`** (ADMINISTRATIVE, one approval) —
+  1. Refuses an IP outside the subnet TRACE's own machine is on
+     (`DiscoveryScanService.assertAuthorizedTarget`, extending the same
+     "explicitly authorized ranges" boundary `scanSubnet` already
+     enforces structurally).
+  2. Probes a small, curated TCP-connect port list — 22 (SSH), 8006
+     (Proxmox), 5985/5986 (WinRM) — via a new
+     `NetworkDiscoveryService.probeTcpPort` (bare connect, no
+     banner/handshake read). SNMP is deliberately absent: it's UDP, so
+     a TCP-connect result would be meaningless, not just unreliable.
+  3. Imports/dedupes the device through the **existing**
+     `DiscoveryScanService.importCandidate` (unchanged, already
+     deduped by IP) — never a second device-creation path.
+  4. Sets a protocol as a *candidate* only when both the port answered
+     **and** `ConnectorRegistryService.get(protocol)` actually returns
+     a connector. This is the enforcement point for "don't assume SSH
+     merely because port 22 is open": an open port with no connector
+     (e.g. WinRM) never gets written to `managementProtocols`, and
+     even a written candidate is still unverified until `verify`
+     succeeds — `managementProtocols` has only ever meant "claimed,"
+     never "confirmed" (see its schema comment).
+  5. Reports whether a usable credential already exists and a
+     `nextStep` string pointing at whichever of
+     `trace_request_credential_enrollment` / `trace_verify_device_onboarding`
+     applies — so Claude never has to guess the next call.
+- **`trace_verify_device_onboarding`** (never gated — same precedent
+  as `check_device_health`) — runs `DevicePollingService.pollDevice`
+  (the one real connector call every health check already goes
+  through) and, only if it comes back `ONLINE`, calls the new
+  `InfraDevicesService.markEnrolled`. On failure,
+  `classifyHealthFailure` best-effort-categorizes the connector's raw
+  error text (`authentication` / `unreachable` / `host-key-mismatch` /
+  `unknown`) — a heuristic over existing error strings (e.g. ssh2's
+  "All configured authentication methods failed"), not a new
+  connector contract, so it can mis-categorize an error TRACE hasn't
+  seen the wording of yet.
+
+**A real pre-existing bug this fixes**: `MetricsSchedulerService`
+(`monitoring/metrics-scheduler.service.ts`) only ever polls devices
+with `enrollmentStatus: "ENROLLED"` — but before v0.6, *nothing in the
+entire codebase* ever set that status; `UpdateInfraDeviceDto` doesn't
+even expose the field. Scheduled polling was silently a no-op for
+every device, hand-configured or onboarded. `markEnrolled` is the
+first and only place that transition happens, and only as the direct
+consequence of a real, live-verified connection — never settable
+through the generic device-update path (so neither a browser PATCH
+nor an MCP `update_device` call can claim "enrolled" without one).
+
+**Approval binding**: the pending action `trace_onboard_device`
+creates carries exactly `{ip, name, category}` — the same values a
+human sees and approves are the same values `configure()` executes
+with; nothing is re-resolved or re-interpreted between proposal and
+execution (same pattern as `update_device`/`request_credential_enrollment`).
+
+**Honest limits, not glossed over**:
+- No real alert-threshold engine exists (see `UNSUPPORTED_CAPABILITIES_NOTE`
+  in `ai-tools.registry.ts`) — "monitoring configured" means "scheduled
+  polling now covers this device," never "thresholds are set."
+- Port probing is a small curated list, not a real port scanner — it
+  exists to generate a *candidate*, never a claim.
+- `classifyHealthFailure` is a best-effort string heuristic over
+  existing connector error messages, not a stable contract connectors
+  are required to honor.
+- No web UI was added for this — the whole point was a chat-driven
+  flow; the existing device panel (v0.5's credential form) is still
+  where the one unavoidable manual step (typing the secret) happens.
+
+See `apps/api/src/infra/onboarding/device-onboarding.service.ts` and
+its spec for the full state machine, and `discovery-scan.service.ts`
+(`probeManagementPorts`, `assertAuthorizedTarget`) /
+`network-discovery.service.ts` (`probeTcpPort`, `isIpWithinCidr`) for
+the discovery-layer additions it's built on.
+
 ## Security model
 
 - **Credentials** are encrypted at rest (AES-256-GCM, Node's built-in
@@ -374,6 +458,12 @@ and its spec for the full state machine.
 
 ## Known limitations
 
+- **Device onboarding (v0.6)** has no real port scanner (a curated
+  4-port TCP-connect probe only), no manufacturer/model fingerprinting
+  beyond what `scanSubnet`'s MAC-vendor guess already provided, and no
+  alert-threshold engine — "monitoring configured" means scheduled
+  polling now covers the device, not that thresholds exist. See
+  "Device onboarding orchestration" above.
 - ~~The backend's `npm run dev` (`tsx watch`) silently breaks dependency
   injection for some services~~ — **fixed, commit `8d17002`.** `tsx`'s
   esbuild-based transform never emits `emitDecoratorMetadata` at all

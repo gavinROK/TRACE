@@ -9,6 +9,7 @@ import { InfraDevicesService } from "../devices/devices.service";
 import { DiscoveryScanService } from "../discovery/discovery-scan.service";
 import { EnvironmentsService } from "../environments/environments.service";
 import { DevicePollingService } from "../monitoring/device-polling.service";
+import { DeviceOnboardingService } from "../onboarding/device-onboarding.service";
 import { TopologyService } from "../topology/topology.service";
 import type { AiToolDefinition } from "./providers/ai-provider.interface";
 
@@ -54,6 +55,8 @@ export const AI_ACTION_CLASSIFICATION: Record<string, AiActionClassification> = 
   execute_group_command: AiActionClassification.ADMINISTRATIVE,
   update_device: AiActionClassification.ADMINISTRATIVE,
   request_credential_enrollment: AiActionClassification.ADMINISTRATIVE,
+  onboard_device: AiActionClassification.ADMINISTRATIVE,
+  verify_device_onboarding: AiActionClassification.READ_ONLY,
   // perform_action is classified dynamically — see classifyPerformAction.
 };
 
@@ -210,6 +213,30 @@ export const AI_TOOL_DEFINITIONS: AiToolDefinition[] = [
       required: ["deviceId", "protocol"],
     },
   },
+  {
+    name: "onboard_device",
+    description:
+      "Discover and configure a device by IP in one step: probes a small set of well-known management ports (SSH 22, Proxmox 8006, WinRM 5985/5986 — never SNMP, it's UDP), imports/dedupes it into inventory, and sets any protocol candidates a connector actually exists for. Never assumes a protocol is actually supported just because its port is open — that candidate must still pass verify_device_onboarding before it counts. Refuses an IP outside the subnet TRACE's own machine is on. ADMINISTRATIVE — requires explicit user approval, bound to the exact ip/name/category given. Returns a nextStep telling you whether to request a credential or verify connectivity.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ip: { type: "string" },
+        name: { type: "string", description: "Optional display name; defaults to the IP." },
+        category: { type: "string", description: "Optional InfraDeviceCategory, e.g. ROUTER, PHYSICAL_SERVER." },
+      },
+      required: ["ip"],
+    },
+  },
+  {
+    name: "verify_device_onboarding",
+    description:
+      "Run a real connectivity test against a device using its already-stored credential, and — only if it actually comes back ONLINE — mark the device ENROLLED, which is what makes TRACE's scheduled health/metrics polling pick it up automatically. Read-only in the sense that it never requires approval (same precedent as check_device_health), but it does record what it observes, same as that tool. If onlineState isn't ONLINE, failureCategory distinguishes authentication/unreachable/host-key-mismatch/unknown on a best-effort basis. Safe to call repeatedly — e.g. right after a human finishes a credential-enrollment window.",
+    inputSchema: {
+      type: "object",
+      properties: { deviceId: { type: "string" } },
+      required: ["deviceId"],
+    },
+  },
 ];
 
 export interface ToolCallContext {
@@ -239,6 +266,7 @@ export class AiToolsRegistryService {
     @Inject(ActionsService) private readonly actionsService: ActionsService,
     @Inject(DiscoveryScanService) private readonly discoveryScanService: DiscoveryScanService,
     @Inject(CredentialEnrollmentService) private readonly credentialEnrollmentService: CredentialEnrollmentService,
+    @Inject(DeviceOnboardingService) private readonly deviceOnboardingService: DeviceOnboardingService,
   ) {}
 
   async run(toolName: string, input: Record<string, unknown>, ctx: ToolCallContext): Promise<unknown> {
@@ -382,6 +410,23 @@ export class AiToolsRegistryService {
         label,
         ctx.actor,
       );
+    },
+
+    // Runs once a human approves the proposing pending action (see
+    // onboarding/device-onboarding.controller.ts `configure`) —
+    // `ctx.actor` is that approver's own browser-session actor.
+    onboard_device: async (input, ctx) => {
+      const ip = requireString(input, "ip");
+      const name = typeof input.name === "string" ? input.name : undefined;
+      const category = typeof input.category === "string" ? (input.category as never) : undefined;
+      return this.deviceOnboardingService.configure(ctx.environmentId, ctx.actor, { ip, name, category });
+    },
+
+    // READ_ONLY — never gated, same as check_device_health. Runs
+    // directly, not through the approval dispatcher.
+    verify_device_onboarding: async (input, ctx) => {
+      const deviceId = requireString(input, "deviceId");
+      return this.deviceOnboardingService.verify(ctx.environmentId, deviceId, ctx.actor);
     },
   };
 }

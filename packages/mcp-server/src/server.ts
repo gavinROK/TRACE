@@ -319,6 +319,31 @@ export function createServer(client: TraceClient): McpServer {
   );
 
   registerTool(
+    "trace_onboard_device",
+    "TRACE v0.6: discover and configure a device by IP in one step. Probes a small curated set of well-known management ports (SSH 22, Proxmox 8006, WinRM 5985/5986 — never SNMP, which is UDP), imports/dedupes it into inventory (reuses existing inventory by IP rather than creating a duplicate), and sets any protocol candidate TRACE actually has a connector for. This never claims a protocol is truly supported just because its port answered — that candidate still has to pass trace_verify_device_onboarding. Refuses an IP outside the subnet TRACE's own machine is actually on. This never executes immediately — it creates a pending action a human must approve in TRACE's dashboard (Settings → Pending approvals), bound to exactly the ip/name/category given. The result's nextStep tells you whether to call trace_request_credential_enrollment or trace_verify_device_onboarding next.",
+    {
+      environmentId: z.string(),
+      ip: z.string(),
+      name: z.string().optional().describe("Optional display name; defaults to the IP."),
+      category: z.string().optional().describe("Optional InfraDeviceCategory, e.g. ROUTER, PHYSICAL_SERVER."),
+    },
+    async ({ environmentId, ip, name, category }) =>
+      jsonResult(
+        await guarded(() =>
+          client.onboardDevice(environmentId as string, ip as string, name as string | undefined, category as string | undefined),
+        ),
+      ),
+  );
+
+  registerTool(
+    "trace_verify_device_onboarding",
+    "TRACE v0.6: run a real connectivity test against a device using its already-stored credential, and — only if it actually comes back ONLINE — mark it ENROLLED, which is what makes TRACE's scheduled health/metrics polling start covering it automatically. Never requires approval (same precedent as trace_get_health): it only ever records what a live connector call actually observed. If the result isn't ONLINE, failureCategory gives a best-effort authentication/unreachable/host-key-mismatch/unknown distinction. Safe to call repeatedly — e.g. right after a human finishes a credential-enrollment window from trace_request_credential_enrollment.",
+    { environmentId: z.string(), deviceId: z.string() },
+    async ({ environmentId, deviceId }) =>
+      jsonResult(await guarded(() => client.verifyDeviceOnboarding(environmentId as string, deviceId as string))),
+  );
+
+  registerTool(
     "trace_list_alerts",
     "List active alerts. Honest about a real gap: TRACE's infrastructure control plane has no threshold-based alerting/notification engine yet — this reports that limitation plainly, plus the closest available signals (devices currently OFFLINE and the recent audit log), instead of inventing alerts that don't exist.",
     { environmentId: z.string() },

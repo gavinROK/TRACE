@@ -152,4 +152,39 @@ describe("InfraDevicesService", () => {
       ]);
     });
   });
+
+  describe("markEnrolled", () => {
+    it("flips a DISCOVERED device to ENROLLED and audit-logs the transition", async () => {
+      prisma.infraDevice.findFirst.mockResolvedValue({ id: "d1", enrollmentStatus: "DISCOVERED" });
+      prisma.infraDevice.update.mockResolvedValue({ id: "d1", enrollmentStatus: "ENROLLED" });
+
+      const result = await service.markEnrolled("env1", "d1", "user:u1");
+
+      expect(prisma.infraDevice.update).toHaveBeenCalledWith(expect.objectContaining({
+        where: { id: "d1" },
+        data: { enrollmentStatus: "ENROLLED" },
+      }));
+      expect(auditLog.record).toHaveBeenCalledWith(expect.objectContaining({
+        action: "device.enrollment-status.enrolled",
+        actor: "user:u1",
+        detail: { previousStatus: "DISCOVERED" },
+      }));
+      expect(result.enrollmentStatus).toBe("ENROLLED");
+    });
+
+    it("is idempotent — re-enrolling an already-ENROLLED device writes nothing", async () => {
+      prisma.infraDevice.findFirst.mockResolvedValue({ id: "d1", enrollmentStatus: "ENROLLED" });
+
+      await service.markEnrolled("env1", "d1", "user:u1");
+
+      expect(prisma.infraDevice.update).not.toHaveBeenCalled();
+      expect(auditLog.record).not.toHaveBeenCalled();
+    });
+
+    it("throws NotFoundException for a device outside the environment", async () => {
+      prisma.infraDevice.findFirst.mockResolvedValue(null);
+
+      await expect(service.markEnrolled("env1", "missing", "user:u1")).rejects.toThrow(NotFoundException);
+    });
+  });
 });

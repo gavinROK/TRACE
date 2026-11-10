@@ -40,6 +40,7 @@ describe("AiToolsRegistryService", () => {
   const actionsService = { performAction: jest.fn() };
   const discoveryScanService = { detectLocalNetwork: jest.fn(), scanSubnet: jest.fn() };
   const credentialEnrollmentService = { authorizeSession: jest.fn() };
+  const deviceOnboardingService = { configure: jest.fn(), verify: jest.fn() };
 
   const registry = new AiToolsRegistryService(
     prisma as never,
@@ -52,6 +53,7 @@ describe("AiToolsRegistryService", () => {
     actionsService as never,
     discoveryScanService as never,
     credentialEnrollmentService as never,
+    deviceOnboardingService as never,
   );
 
   beforeEach(() => jest.clearAllMocks());
@@ -115,6 +117,23 @@ describe("AiToolsRegistryService", () => {
       registry.run("request_credential_enrollment", { deviceId: "d1", protocol: "TELNET" }, { environmentId: "env1", actor: "user:u1" }),
     ).rejects.toThrow(BadRequestException);
     expect(credentialEnrollmentService.authorizeSession).not.toHaveBeenCalled();
+  });
+
+  it("onboard_device forwards ip/name/category and the approver's actor to DeviceOnboardingService.configure", async () => {
+    deviceOnboardingService.configure.mockResolvedValue({ nextStep: "..." });
+    await registry.run("onboard_device", { ip: "192.168.0.1", name: "Router", category: "ROUTER" }, { environmentId: "env1", actor: "user:u1" });
+    expect(deviceOnboardingService.configure).toHaveBeenCalledWith("env1", "user:u1", { ip: "192.168.0.1", name: "Router", category: "ROUTER" });
+  });
+
+  it("verify_device_onboarding forwards deviceId and actor to DeviceOnboardingService.verify", async () => {
+    deviceOnboardingService.verify.mockResolvedValue({ ready: true });
+    await registry.run("verify_device_onboarding", { deviceId: "d1" }, { environmentId: "env1", actor: "user:u1" });
+    expect(deviceOnboardingService.verify).toHaveBeenCalledWith("env1", "d1", "user:u1");
+  });
+
+  it("classifies onboard_device as ADMINISTRATIVE and verify_device_onboarding as READ_ONLY", () => {
+    expect(classifyToolCall("onboard_device", { ip: "192.168.0.1" })).toBe(AiActionClassification.ADMINISTRATIVE);
+    expect(classifyToolCall("verify_device_onboarding", { deviceId: "d1" })).toBe(AiActionClassification.READ_ONLY);
   });
 
   it("throws BadRequestException for an unknown tool name", async () => {

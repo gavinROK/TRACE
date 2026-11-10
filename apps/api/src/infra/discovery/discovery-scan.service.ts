@@ -1,11 +1,29 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
-import { InfraDeviceCategory } from "@prisma/client";
+import { BadRequestException, ForbiddenException, Inject, Injectable } from "@nestjs/common";
+import { InfraDeviceCategory, InfraManagementProtocol } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
 import { InfraDevicesService } from "../devices/devices.service";
 import { ImportCandidateDto } from "./dto/import-candidate.dto";
 import { guessVendorFromMac } from "./mac-vendor-lookup";
-import { NetworkDiscoveryService } from "./network-discovery.service";
+import { isIpWithinCidr, NetworkDiscoveryService } from "./network-discovery.service";
+
+/** A TCP port worth probing, and the protocol it's a *hint* toward —
+ * never a confirmed capability (see `probeManagementPorts`). Kept to a
+ * small, deliberately curated list rather than every port a connector
+ * might ever use, so this stays a cheap, honest hint instead of
+ * something that looks like a real port scanner. */
+const CANDIDATE_MANAGEMENT_PORTS: ReadonlyArray<{ port: number; protocolHint: InfraManagementProtocol }> = [
+  { port: 22, protocolHint: InfraManagementProtocol.SSH },
+  { port: 8006, protocolHint: InfraManagementProtocol.PROXMOX_API },
+  { port: 5985, protocolHint: InfraManagementProtocol.WINDOWS_WINRM },
+  { port: 5986, protocolHint: InfraManagementProtocol.WINDOWS_WINRM },
+];
+
+export interface PortProbeResult {
+  port: number;
+  open: boolean;
+  protocolHint: InfraManagementProtocol;
+}
 
 export interface DetectedLocalNetwork {
   interfaceName?: string;
@@ -131,6 +149,39 @@ export class DiscoveryScanService {
     candidates.sort((a, b) => Number(b.isGateway) - Number(a.isGateway) || a.ip.localeCompare(b.ip, undefined, { numeric: true }));
 
     return { ...local, subnetCidr: effectiveCidr, scannedAt: new Date(), usedNmap, candidates };
+  }
+
+  /** Refuses any target outside the subnet TRACE's own machine was
+   * actually detected on — the same "explicitly authorized ranges"
+   * boundary `scanSubnet` already enforces by construction (it only
+   * ever scans a cidr derived from this machine's own interface),
+   * extended to the onboarding workflow's single-IP operations, which
+   * don't go through a subnet scan first. */
+  async assertAuthorizedTarget(ip: string): Promise<void> {
+    const local = await this.detectLocalNetwork();
+    if (!local.subnetCidr || !isIpWithinCidr(ip, local.subnetCidr)) {
+      throw new ForbiddenException(
+        `${ip} is outside the subnet TRACE's own machine is on (${local.subnetCidr ?? "undetected"}) — onboarding is restricted to explicitly authorized local ranges.`,
+      );
+    }
+  }
+
+  /** A bare TCP-connect probe against a small, curated set of
+   * well-known management ports — never a full port scan, never a
+   * banner/handshake read. Each result is a *hint*, not a claim: the
+   * caller (device-onboarding.service.ts) must still get a real
+   * connector call to succeed before treating a protocol as actually
+   * supported (PRODUCT_SPEC: "do not assume a device supports SSH
+   * merely because port 22 is open"). SNMP has no entry here — it's
+   * UDP, so a TCP-connect result would tell you nothing real. */
+  async probeManagementPorts(ip: string): Promise<PortProbeResult[]> {
+    return Promise.all(
+      CANDIDATE_MANAGEMENT_PORTS.map(async ({ port, protocolHint }) => ({
+        port,
+        protocolHint,
+        open: await this.networkDiscovery.probeTcpPort(ip, port),
+      })),
+    );
   }
 
   /** Creates a new device, or — if a device with this IP already
