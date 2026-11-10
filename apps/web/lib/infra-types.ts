@@ -36,10 +36,13 @@ export interface InfraDeviceSummary {
   osVersion: string | null;
   ipAddresses: string[];
   macAddresses: string[];
+  managementPort: number | null;
   managementProtocols: InfraManagementProtocol[];
+  tags: string[];
   enrollmentStatus: InfraEnrollmentStatus;
   onlineState: InfraOnlineState;
   lastContactAt: string | null;
+  discoverySource: string | null;
   discoveredAt: string;
   updatedAt: string;
   parentDevice: { id: string; name: string } | null;

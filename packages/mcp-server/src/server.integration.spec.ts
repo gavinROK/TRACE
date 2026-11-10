@@ -47,6 +47,10 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
         "trace_list_devices",
         "trace_list_environments",
         "trace_perform_action",
+        "trace_diagnose_device",
+        "trace_detect_local_network",
+        "trace_scan_network",
+        "trace_update_device",
       ].sort(),
     );
   });
@@ -75,6 +79,30 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
       "http://localhost:4000/infra/environments/env1/devices/dev1/check-health",
       expect.objectContaining({ method: "POST" }),
     );
+  });
+
+  it("diagnoses a device missing a management address, instead of a generic error", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        id: "dev1",
+        name: "Beelink",
+        category: "PHYSICAL_SERVER",
+        ipAddresses: [],
+        managementProtocols: [],
+        enrollmentStatus: "DISCOVERED",
+        onlineState: "UNKNOWN",
+        capabilities: [],
+        credentials: [],
+      }),
+    });
+    const client = await connectedClient();
+
+    const result = await client.callTool({ name: "trace_diagnose_device", arguments: { environmentId: "env1", deviceId: "dev1" } });
+
+    const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+    expect(JSON.parse(text).diagnosis).toContain("Missing: a management IP address");
   });
 
   it("surfaces a TRACE API error as a tool error rather than crashing the server", async () => {

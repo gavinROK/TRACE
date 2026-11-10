@@ -1,5 +1,5 @@
 import { InfraDeviceCategory, InfraManagementProtocol } from "@prisma/client";
-import { IsArray, IsEnum, IsOptional, IsString, MinLength } from "class-validator";
+import { IsArray, IsEnum, IsInt, IsOptional, IsString, Max, Min, MinLength } from "class-validator";
 
 export class CreateInfraDeviceDto {
   @IsString()
@@ -17,6 +17,12 @@ export class CreateInfraDeviceDto {
   @IsOptional() @IsString() parentDeviceId?: string;
 
   @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(65535)
+  managementPort?: number;
+
+  @IsOptional()
   @IsArray()
   @IsString({ each: true })
   ipAddresses?: string[];
@@ -25,6 +31,11 @@ export class CreateInfraDeviceDto {
   @IsArray()
   @IsString({ each: true })
   macAddresses?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  tags?: string[];
 
   @IsOptional()
   @IsArray()

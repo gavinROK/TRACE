@@ -34,6 +34,20 @@ describe("NetworkDiscoveryService", () => {
     ]);
   });
 
+  it("parses the default gateway from `route -n get default`", async () => {
+    mockExecOnce({
+      stdout: "   route to: default\ndestination: default\n       mask: default\n    gateway: 192.168.0.1\n  interface: en0\n",
+    });
+
+    await expect(service.getDefaultGateway()).resolves.toBe("192.168.0.1");
+  });
+
+  it("returns undefined (not throwing) when there is no default route", async () => {
+    mockExecOnce(new Error("route: writing to routing socket: not in table"));
+
+    await expect(service.getDefaultGateway()).resolves.toBeUndefined();
+  });
+
   it("parses macOS arp -a output into ip/mac/interface rows", async () => {
     mockExecOnce({
       stdout: "router.home (192.168.1.1) at a1:b2:c3:d4:e5:f6 on en0 ifscope [ethernet]\nincomplete (192.168.1.99) at (incomplete) on en0 ifscope [ethernet]\n",

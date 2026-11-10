@@ -433,11 +433,23 @@ model InfraDevice {
   osVersion       String?
   ipAddresses     String[]
   macAddresses    String[]
+  /// The port TRACE connects to for its primary management protocol
+  /// (e.g. 22 for SSH, 8006 for Proxmox, 161 for SNMP) — editable from
+  /// the device settings panel so a non-default port doesn't require a
+  /// database edit.
+  managementPort  Int?
   managementProtocols InfraManagementProtocol[]
+  /// Free-form operator-assigned labels (e.g. "homelab", "critical") —
+  /// never used for authorization, purely organizational.
+  tags            String[]
   enrollmentStatus InfraEnrollmentStatus @default(DISCOVERED)
   onlineState     InfraOnlineState     @default(UNKNOWN)
   lastContactAt   DateTime?
   notes           String?
+  /// How this row came to exist, for the audit trail a discovery import
+  /// leaves behind — e.g. "manual", "discovery:arp", "discovery:nmap",
+  /// "discovery:proxmox". Null for rows created before this field existed.
+  discoverySource String?
   discoveredAt    DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
 

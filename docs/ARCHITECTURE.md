@@ -103,6 +103,43 @@ single enforcement point for "don't show a control that isn't real."
 
 ## Known limitations
 
+- **The backend's `npm run dev` (`tsx watch`) silently breaks dependency
+  injection for some services.** `tsx`'s esbuild-based transform doesn't
+  reliably emit `emitDecoratorMetadata` the way `tsc` does — a
+  constructor-injected service can come back `undefined` at request
+  time with no error at startup (confirmed live: `TraceAuthService`
+  injected into `TraceAuthController`/`TraceAccessGuard` was `undefined`
+  under `tsx watch` and correctly populated in the identical compiled
+  build). Build and run the compiled server
+  (`npm run build && npm run start`) instead until this is root-caused.
+- **`arp -a` returns completely empty output when invoked from Node on
+  at least one real macOS machine, even though the same command run
+  directly in a shell shows a fully populated ARP table.** Confirmed via
+  `execFile`/`exec`/`spawn`, all empty with exit code 0 and no error —
+  almost certainly macOS's "Local Network" privacy permission gating
+  ARP cache visibility per requesting binary (Terminal/shell has
+  presumably been granted it at some point; a freshly-spawned `node`
+  process hasn't, and there's no way to trigger the permission dialog
+  from a non-interactive process). `route -n get default` (gateway
+  detection) and `nmap -sn` (ping sweep) are unaffected — discovery
+  still finds real hosts and the likely router, it just can't attach a
+  MAC address or vendor guess until this is granted. See the README's
+  Troubleshooting for how to check/grant it.
+- **`next build` (Turbopack) fails with a panic ("binding to a
+  port... Operation not permitted") on this Next.js version (16.4.2),
+  reproduced on two different machines including a real, unsandboxed
+  Mac.** This looks like a genuine Turbopack/macOS compatibility issue
+  in this release, not an environment-specific quirk. `next build
+  --webpack` produces an identical app and is the documented reliable
+  path — see the README's Troubleshooting.
+- **The Proxmox connector auto-discovers the cluster node name only
+  when there's exactly one** (`ProxmoxConnector.requireNode`) — found
+  live: nothing ever set `metadata.node` for a manually-enrolled
+  hypervisor device (only VMs/containers created via
+  `proxmox-discovery.service.ts` had it), so every health check on a
+  manually-enrolled Proxmox host threw until this fallback was added. A
+  real multi-node cluster still needs `metadata.node` set explicitly —
+  guessing which node a device means would be an invented fact.
 - **WebAuthn/YubiKey is unit-tested against a mocked
   `@simplewebauthn/server`, never against a real browser + hardware
   security key in this environment.** The registration/assertion logic
@@ -125,13 +162,14 @@ single enforcement point for "don't show a control that isn't real."
   whatever key a host presents on its next first connection. Pin a
   fingerprint in the device's credential (`hostKeyFingerprint`) if you
   need persistence today.
-- **No live-infrastructure testing in this repository's CI/dev session.**
-  Every connector and discovery method has unit tests against a mocked
-  transport (`ssh2`, `node:https`, `net-snmp`, `node:child_process`) —
-  genuine coverage of TRACE's own logic — but none of them have been run
-  against a real Beelink, Proxmox cluster, NETGEAR switch, or any other
-  physical device. See the root README's "What's tested" for the exact
-  split.
+- **Live-infrastructure testing so far covers Proxmox and local network
+  discovery, not SSH or SNMP.** The Proxmox connector and the local
+  discovery scan have both been run against a real homelab (a real
+  Beelink/Proxmox VE host, a real LAN); the SSH and SNMPv3 connectors
+  still have only unit-test coverage against a mocked transport (`ssh2`,
+  `net-snmp`) — neither has been run against a real Linux host or a real
+  managed switch. See the root README's "What's tested" for the exact,
+  current split.
 - **`@nestjs/schedule`'s and `@nestjs/mapped-types`'s current npm
   releases ship ESM-only** (`"type": "module"`), which a CommonJS-compiled
   NestJS app cannot `require()` at runtime (confirmed by actually booting

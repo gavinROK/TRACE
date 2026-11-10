@@ -5,6 +5,7 @@ import { AuditLogService } from "../audit/audit-log.service";
 import { ConnectorRegistryService } from "../connectors/connector-registry.service";
 import { CredentialsService } from "../credentials/credentials.service";
 import type { ConnectorTarget } from "../connectors/connector.types";
+import { withManagementPort } from "../connectors/apply-management-port";
 
 export interface PollResult {
   onlineState: InfraOnlineState;
@@ -80,7 +81,7 @@ export class DevicePollingService {
 
   private async buildTarget(
     environmentId: string,
-    device: { id: string; ipAddresses: string[]; managementProtocols: InfraManagementProtocol[] },
+    device: { id: string; ipAddresses: string[]; managementProtocols: InfraManagementProtocol[]; managementPort: number | null },
   ): Promise<{ protocol: InfraManagementProtocol; connectorTarget: ConnectorTarget } | undefined> {
     const host = device.ipAddresses[0];
     if (!host) return undefined;
@@ -90,7 +91,10 @@ export class DevicePollingService {
       if (!connector) continue;
       const credential = await this.credentialsService.getDecryptedForDevice(environmentId, device.id, protocol);
       if (!credential) continue;
-      return { protocol, connectorTarget: { deviceId: device.id, host, credential } };
+      return {
+        protocol,
+        connectorTarget: { deviceId: device.id, host, credential: withManagementPort(credential, device.managementPort) },
+      };
     }
     return undefined;
   }

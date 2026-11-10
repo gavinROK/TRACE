@@ -4,6 +4,7 @@ import { AuditLogService } from "../audit/audit-log.service";
 import { ConnectorRegistryService } from "../connectors/connector-registry.service";
 import { CredentialsService } from "../credentials/credentials.service";
 import type { ActionResult } from "../connectors/connector.types";
+import { withManagementPort } from "../connectors/apply-management-port";
 
 /** Actions that disrupt a running workload — PRODUCT_SPEC.md section 12:
  * these need an explicit `confirm: true`, not just a valid session. A
@@ -58,7 +59,7 @@ export class ActionsService {
 
       const metadata = device.notes ? this.tryParseJson(device.notes) : undefined;
       const result = await connector.performAction(
-        { deviceId, host, metadata, credential },
+        { deviceId, host, metadata, credential: withManagementPort(credential, device.managementPort) },
         action,
         params,
       );

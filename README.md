@@ -22,27 +22,35 @@ implemented and were verified against a live database in earlier sessions
 — see [`docs/DEVELOPMENT_STATUS.md`](docs/DEVELOPMENT_STATUS.md) for the
 full, dated log.
 
-Infrastructure control plane: implemented this session (devices,
-environments, SSH/Proxmox/SNMP connectors, credential encryption, auth,
-command console, discovery, monitoring, MCP server, frontend). **Every
-connector and service has real automated test coverage, and the compiled
-server has been verified to actually boot** — but nothing has run against
-a live database or real infrastructure in this environment. See
-"What's tested" below before relying on this against your own homelab.
+Infrastructure control plane: implemented across two sessions and, as of
+the second, **verified live against the operator's real homelab** —
+real Postgres, a real Proxmox host (the Beelink), and a real LAN scan —
+not just unit tests. See "What's tested" below for the exact split that
+remains between what's live-verified and what's still only unit-tested.
 
 ## What's tested
 
-| Area | Tested how | NOT yet verified |
-| --- | --- | --- |
-| Backend logic (devices, environments, console, discovery, actions, monitoring, credentials, auth) | 198 Jest tests, each connector/service's own logic against a mocked transport | Against a live Postgres database |
-| SSH connector | Unit tests mocking `ssh2`'s `Client` | Against a real SSH host (point it at your Beelink to find out) |
-| Proxmox connector | Unit tests mocking `node:https` | Against a real Proxmox VE cluster |
-| SNMP connector | Unit tests mocking `net-snmp` | Against a real SNMPv3-capable switch |
-| Local discovery (interfaces/ARP/ping/nmap) | Unit tests mocking `child_process`/`os` | Runs real commands on whatever machine executes it — genuinely works, just not exercised against your actual LAN here |
-| WebAuthn/YubiKey | Unit tests mocking `@simplewebauthn/server` (challenge/credential logic) | The real browser+hardware ceremony |
-| MCP server | **A real `@modelcontextprotocol/sdk` `Client` connects over the SDK's in-memory transport and calls tools end-to-end** (`packages/mcp-server/src/server.integration.spec.ts`) | Registering it with an actual Claude Code CLI session |
-| NestJS dependency wiring | `infra.module.spec.ts` resolves the entire DI graph; the **compiled server was actually booted** (`node dist/main.js`) and mapped every route, failing only at the Postgres connection | — |
-| Frontend (`/infra`) | `tsc --noEmit`, ESLint, and a production build (via webpack — see Troubleshooting) all pass | Never opened in a browser in this environment — no live backend to click through against |
+| Area | Tested how |
+| --- | --- |
+| Backend logic (devices, environments, console, discovery, actions, monitoring, credentials, auth) | 227 Jest tests, each connector/service's own logic against a mocked transport, **plus live against a real Postgres database** |
+| Proxmox connector | Unit tests mocking `node:https`, **plus a real live connection to a real Proxmox VE host**: password/ticket auth, automatic node-name discovery, real CPU/memory/disk metrics collected, 4 real VMs/containers discovered and added to inventory, all confirmed to survive a backend restart |
+| Local network discovery (interfaces, default gateway, nmap ping sweep) | Unit tests, **plus a real scan of the operator's actual LAN** — correctly detected the real subnet/gateway and found real live hosts via nmap |
+| ARP-based MAC/vendor discovery | Unit tests only. **Live-tested and found not to work on this specific Mac**: `arp -a` returns empty output when invoked from Node (but not from an interactive shell), almost certainly macOS's "Local Network" privacy permission gating ARP visibility per-binary. Discovery still works via nmap + gateway detection; it just can't add a MAC/vendor hint until this permission is granted — see "Known limitations." |
+| SSH connector | Unit tests mocking `ssh2`'s `Client` | Not yet tested against a real SSH host in this repo's history — point it at a real Linux box to find out |
+| SNMP connector | Unit tests mocking `net-snmp` | Not yet tested against a real SNMPv3-capable device |
+| WebAuthn/YubiKey | Unit tests mocking `@simplewebauthn/server` (challenge/credential logic) | Not yet tested against a real browser + hardware security key |
+| MCP server | A real `@modelcontextprotocol/sdk` `Client` connects over the SDK's in-memory transport and calls tools end to end (`packages/mcp-server/src/server.integration.spec.ts`) | Not yet registered with an actual Claude Code CLI session |
+| NestJS dependency wiring | `infra.module.spec.ts` resolves the entire DI graph; **the compiled server was booted against a real database** and every route, including live Proxmox calls, worked | — |
+| Frontend (unified `/` dashboard) | `tsc --noEmit`, ESLint, and a production build (via webpack — see Troubleshooting) all pass; the dev server was booted and every route (`/`, `/dev-intel`, `/infra` redirect) confirmed to respond correctly | Not click-tested in an actual browser in this environment — no GUI access here; verify the click-through yourself |
+
+**A real, important gotcha found live**: the backend's normal dev command,
+`npm run dev` (`tsx watch`), silently breaks dependency injection for
+several classes — `tsx`'s esbuild-based transform doesn't reliably emit
+`emitDecoratorMetadata` the way `tsc` does, so a constructor-injected
+service comes back `undefined` at request time with no error at startup.
+**Build and run the compiled server (`npm run build && npm run start`,
+or `node dist/main.js`) instead of `npm run dev` until this is fixed** —
+confirmed by isolating the exact same request against both and comparing.
 
 No live device metrics, IP addresses, or topology connections anywhere in
 this repository are invented — see
@@ -78,7 +86,7 @@ cp .env.example .env                # adjust if needed
 npx prisma migrate deploy           # apply every migration
 npx tsx prisma/seed.ts              # developer-intelligence demo data
 npx tsx prisma/seed-infra.ts        # "Gavin's Home Infrastructure" environment
-npm run dev                         # API on http://localhost:4000
+npm run build && npm run start      # API on http://localhost:4000 — see Troubleshooting for why not `npm run dev`
 
 # in a second terminal
 cd apps/web
@@ -86,41 +94,71 @@ cp .env.example .env.local          # adjust if needed
 npm run dev                         # frontend on http://localhost:3000
 ```
 
-Open `http://localhost:3000` for the developer-intelligence graph, or
-`http://localhost:3000/infra` for the infrastructure control plane (a
-small badge in the corner links between the two). The infra page's first
-load asks you to set up the one operator account (email + password) — see
-"Security model" below for WebAuthn/YubiKey.
+Open **`http://localhost:3000`** — one unified dashboard: a left sidebar
+(Overview, Topology, Devices, Monitoring, Settings), the selected view in
+the middle, a device's details/edit form on the right when one is
+selected, and a command console you can expand from the bottom at any
+time, in any view. `/infra` now redirects to `/`. The original
+developer-intelligence org graph is preserved, unchanged, at `/dev-intel`.
+
+First load asks you to set up the one operator account (email +
+password) — see "Security model" below for WebAuthn/YubiKey.
+
+## Network discovery
+
+Click **Discover My Network** on the Overview page. TRACE detects your
+active interface, subnet, and default gateway, shows you exactly what
+it's about to scan, and only scans after you confirm. It never scans
+outside that subnet, never port-scans (ARP/neighbor-table inspection plus
+an optional `nmap -sn` ping sweep only), and never invents a device's
+identity — the gateway is labeled a router *candidate*, nothing more,
+and a MAC vendor match is labeled a guess. Pick which discovered hosts to
+import into inventory; nothing already enrolled is ever duplicated or
+deleted by a re-scan.
 
 ## Device enrollment
 
-1. Open `/infra`, select (or create) an environment.
-2. Create a device (name, category, IP address if known) — or run
-   discovery first (`POST /infra/environments/:id/discovery/...`, or the
-   corresponding MCP tool) and enroll a discovered one.
-3. Add a credential for it: SSH (username + password or private key),
-   Proxmox (API token), or SNMPv3 (auth/priv keys) — via
-   `POST /infra/environments/:id/credentials`. The payload is encrypted
-   immediately and never echoed back by any endpoint.
-4. Click "Check health" on the device, or wait for the next scheduled
-   poll (`TRACE_METRICS_POLL_INTERVAL_MS`, default 5 minutes).
+1. Open the Devices view, select (or create) a device.
+2. Click **Edit settings** to set its management IP/hostname, port, and
+   protocol(s) — or import one straight from network discovery.
+3. Add a credential for it from the same panel (SSH: username + password
+   or private key; Proxmox: an API token, or username + password;
+   SNMPv3: auth/priv keys). It's encrypted immediately and never echoed
+   back by any endpoint or shown in the UI again.
+4. Click **Test connection** (calls the real `getHealth`), or wait for
+   the next scheduled poll (`TRACE_METRICS_POLL_INTERVAL_MS`, default 5
+   minutes).
 
-### Proxmox integration
+### Proxmox integration — **live-verified against a real Beelink/Proxmox VE host**
 
-Create an API token in the Proxmox web UI (`Datacenter → Permissions → API
-Tokens`), then enroll a credential with:
+Either an API token (`Datacenter → Permissions → API Tokens` in the
+Proxmox web UI — recommended for anything beyond first testing, since a
+token can be revoked independently of the account password) or the
+account's own username + password works:
 
 ```json
 { "label": "beelink-proxmox", "protocol": "PROXMOX_API", "deviceId": "<hypervisor device id>",
   "payload": { "tokenUser": "root@pam", "tokenId": "trace", "tokenSecret": "<secret>" } }
 ```
+```json
+{ "label": "beelink-proxmox", "protocol": "PROXMOX_API", "deviceId": "<hypervisor device id>",
+  "payload": { "username": "root@pam", "password": "<password>", "allowSelfSigned": true } }
+```
 
-Proxmox's web UI serves a self-signed certificate by default — TRACE
-verifies TLS and will refuse to connect until you either install a real
-certificate or explicitly add `"allowSelfSigned": true` to the payload
-(a deliberate choice you make, not a default). Once enrolled, run
-discovery (`POST /infra/environments/:id/discovery/proxmox/:hypervisorDeviceId`)
-to enumerate its VMs and containers into the topology.
+Password auth is exchanged for a Proxmox session ticket on every call,
+real-tested end to end: ONLINE status, 8 real metrics (CPU/memory/disk/
+uptime) collected, and 4 real VMs/containers discovered into inventory
+from an actual homelab Proxmox host — all confirmed to persist across a
+backend restart. Proxmox's web UI serves a self-signed certificate by
+default — TRACE verifies TLS and refuses to connect until you either
+install a real certificate or explicitly add `"allowSelfSigned": true`
+(a deliberate choice you make, not a default). The Proxmox *node name*
+is auto-discovered when there's exactly one (the common single-host
+case); a real cluster needs it set explicitly via the device's metadata
+to disambiguate. Once enrolled, click **Discover guests** (or
+`POST /infra/environments/:id/discovery/proxmox/:hypervisorDeviceId`) to
+enumerate its VMs and containers into the topology — a re-run updates
+existing ones in place rather than duplicating them.
 
 ### SSH configuration
 
@@ -193,14 +231,37 @@ matching scripts needs no root-level change.
 
 ## Troubleshooting
 
+- **`npm run dev` for the backend returns 500s with "Cannot read
+  properties of undefined"** on routes that look fine at startup: `tsx
+  watch`'s esbuild-based transform doesn't reliably emit
+  `emitDecoratorMetadata`, so some constructor-injected services come
+  back `undefined`. Build and run the compiled server instead:
+  `npm run build && npm run start` (or `node dist/main.js`) — confirmed
+  this fixes it by comparing the exact same request against both.
 - **`next build` fails with a Turbopack panic** ("binding to a port...
-  Operation not permitted"): this is an environment/sandbox restriction
-  on spawning a listening socket, not a code issue — confirmed by
-  building the same code successfully with `next build --webpack`. If
-  you hit this on your own Mac (not just a sandboxed CI runner), it's
-  usually a stale `.next` cache or another `next dev` instance still
-  holding Next.js's project-wide dev-server lock; stop it and
-  `rm -rf apps/web/.next` first.
+  Operation not permitted"): reproduced on two different machines with
+  this Next.js version (16.4.2), including a real (non-sandboxed) Mac —
+  this looks like a genuine Turbopack/macOS compatibility issue in this
+  release, not an environment quirk. **Use `next build --webpack`** as
+  the reliable local build; it produces the identical app. If you'd
+  rather chase the Turbopack bug, a stale `.next` cache or another
+  `next dev` instance holding Next.js's project-wide dev-server lock are
+  the other usual suspects — `rm -rf apps/web/.next` and stop any other
+  `next dev` first.
+- **Network discovery finds live hosts via nmap but never any MAC
+  address or vendor guess**, even though `arp -a` shows rich data when
+  you run it yourself in Terminal: confirmed live that `arp -a` returns
+  completely empty output when invoked from Node specifically (not from
+  an interactive shell) — almost certainly macOS's "Local Network"
+  privacy permission gating ARP visibility per requesting binary. Check
+  **System Settings → Privacy & Security → Local Network** and ensure
+  the app you're running TRACE's backend from (Terminal, or whichever
+  app launched `node`) is enabled; if it isn't listed, running the
+  backend once from a normal interactive Terminal session (not a
+  background/headless process) is what gives macOS the opportunity to
+  show the permission prompt. Discovery still works without this — it
+  just can't suggest "likely NETGEAR switch" from a MAC prefix until
+  it's granted.
 - **`node dist/main.js` fails with "No driver (HTTP) has been
   selected... install @nestjs/platform-express"** even though it's
   installed: an npm workspace hoisting split across `node_modules`

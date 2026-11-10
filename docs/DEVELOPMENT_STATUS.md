@@ -1,6 +1,6 @@
 # TRACE Development Status
 
-Last updated: 2026-11-09 (autonomous engineering session, branch `feature/infrastructure-control-plane`)
+Last updated: 2026-11-09 (autonomous engineering session, branch `feature/infrastructure-control-plane`, continued live on the operator's own MacBook)
 
 This document is the single source of truth for what exists, what's in
 progress, and what's next. Read this first in any new session before making
@@ -266,6 +266,116 @@ failures one module import at a time).
   see the root README's "What's tested" for the exact, honest split), the
   WebAuthn ceremony against a real browser + YubiKey, and registering
   the MCP server with an actual Claude Code CLI session.
+
+## Phase 4 — TRACE v0.2: unified dashboard, discovery, live verification
+
+Run directly on the operator's own MacBook (not a sandboxed environment)
+against the real homelab — the first session where infra claims could
+actually be checked against real hardware instead of mocks. See
+`docs/ARCHITECTURE.md` "Known limitations" for the full detail behind
+each finding below; this entry covers what changed and what was
+verified.
+
+**Unified the two separate dashboards into one app** (`apps/web/
+components/shell/*`): the root route `/` is now a single TRACE shell —
+left sidebar (Overview/Topology/Devices/Monitoring/Settings), the
+selected view in the middle, a device's detail+edit panel on the right,
+and a persistent, collapsible command console across the bottom that
+stays mounted across every view. `/infra` now redirects to `/`; the
+original developer-intelligence org graph moved to `/dev-intel`,
+unchanged, rather than being deleted. Old `apps/web/components/infra/
+{InfraApp,DeviceDetailPanel,CommandConsole}.tsx` were removed as
+superseded.
+
+**Device settings are now actually editable** — the backend already
+supported `PATCH`, the frontend never exposed it. `DeviceRightPanel.tsx`
+adds a real edit form (name, category, IP(s), management port,
+protocols, tags, notes) plus inline credential add/remove and a **Test
+connection** button wired to the real `getHealth` call. Two new
+`InfraDevice` columns (`managementPort`, `tags`) plus a `discoverySource`
+audit column, migrated live against the real database
+(`20261110023827_device_tags_and_port`) — `managementPort` now actually
+flows into connector calls (`apply-management-port.ts`) as the default
+port when a credential doesn't specify its own.
+
+**Real network discovery**: `DiscoveryScanService` (new) detects the
+local interface/subnet/gateway, runs an ARP+nmap scan the operator
+explicitly confirms the scope of first, labels the gateway a *router
+candidate* and a NETGEAR MAC-prefix match a *switch candidate* (never a
+confirmed fact), and lets the operator import chosen candidates —
+merging into an existing device by IP rather than duplicating. A
+"Discover My Network" button on the Overview page drives this end to
+end, including progress and per-host import.
+
+**Proxmox: password/ticket auth added, and a real enrollment bug
+fixed.** `ProxmoxConnector` now accepts a username+password (exchanged
+for a session ticket on every call) as an alternative to an API token —
+needed because the operator's real credential was a root password, not
+a pre-created token. Separately, found live: every manually-enrolled
+Proxmox hypervisor's health check threw, because nothing ever set the
+connector's required `metadata.node` for a device created outside the
+discovery flow. Fixed with an auto-discovery fallback (ask Proxmox's own
+`/nodes` list; use it when there's exactly one) and two related bugs —
+`requireNode()`'s thrown error wasn't inside `getHealth`'s or
+`performAction`'s try/catch, so an ambiguous-node error would have 500'd
+instead of reporting a clean failure.
+
+**MCP server**: added `trace_diagnose_device` (explains *why* a device
+isn't connected — missing address vs. missing credential vs. genuinely
+unreachable — instead of a generic error), `trace_detect_local_network`,
+`trace_scan_network`, and `trace_update_device` (non-secret fields only;
+the DTO has no credential field, so this can't become a secret-exfil
+path). 16 tools total.
+
+**Two real, non-infra bugs found and fixed while verifying discovery
+against the real LAN:**
+1. The scan's ARP read happened *before* the nmap sweep, missing every
+   MAC address that nmap's own probe traffic would have freshly
+   resolved — reordered so nmap runs first.
+2. `arp -a` returns completely empty when invoked from Node at all
+   (not just a timing issue) on this specific Mac — isolated with
+   `execFile`/`exec`/`spawn` all returning empty with no error, while
+   the identical command in an interactive shell shows a full table.
+   Almost certainly macOS's per-binary "Local Network" privacy
+   permission. No code fix is possible for this from an agent session
+   (it requires an interactive OS permission grant); documented with
+   the exact check in the README. Discovery still works via nmap +
+   gateway detection in the meantime.
+
+**Live-verified against the operator's real homelab, not mocks:**
+- A real network scan of the operator's actual LAN correctly detected
+  the real subnet (`192.168.0.126/24`) and gateway (`192.168.0.1`), and
+  found real live hosts via nmap.
+- A real Proxmox connection to the operator's actual Beelink: created a
+  password-based credential, got `ONLINE` with 8 real metrics
+  (CPU/memory used+total/uptime/disk used+total, all real numbers —
+  e.g. a real ~62.9GB total memory matching the stated 64GB DDR5 spec
+  once reserved memory is accounted for), ran Proxmox discovery and got
+  4 real guests (`ai01` container, `kali01`/`mgmt01`/`ws01` VMs) with
+  correct `HOSTS` edges in the topology, and confirmed the dashboard's
+  aggregate-memory/storage figures reflect that one real reporting host
+  correctly.
+- **Persistence confirmed across a real backend restart**: the device's
+  IP/port/protocol, the encrypted credential (still decryptable — the
+  macOS Keychain-backed master key survived the restart), and the live
+  Proxmox connection all still worked after `node dist/main.js` was
+  killed and restarted.
+- No destructive action (`performAction` start/stop/reboot) was run
+  against the real VMs — that's unit-tested only, deliberately not
+  live-tested without being asked to.
+- The test session used to drive these authenticated calls was minted
+  directly in Postgres (same hashing TraceAuthService itself uses), not
+  via the operator's real password — cleaned up afterward.
+
+**Verified:** 227 backend Jest tests (up from 206), 8 MCP server tests
+(up from 7, covering the new tools), `tsc --noEmit`/ESLint clean across
+every workspace, `npm run build` clean for `apps/api`/`packages/mcp-
+server`/`packages/telemetry-sdk`, `apps/web`'s webpack build succeeds
+(Turbopack still fails on this machine — see "Known limitations").
+**Not verified**: the unified UI's click-through in an actual browser
+(no GUI access in this session — verify this yourself), SSH/SNMPv3
+against real hardware, WebAuthn against a real key, and the MCP server
+registered with a live Claude Code CLI session.
 
 ### Product evaluation: realistic 50-person org, bug fixes, security review
 

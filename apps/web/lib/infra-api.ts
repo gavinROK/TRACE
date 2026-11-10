@@ -9,6 +9,7 @@
  */
 import type {
   InfraCommandRun,
+  InfraCredentialSummary,
   InfraDashboardSummary,
   InfraDeviceDetail,
   InfraDeviceSummary,
@@ -16,6 +17,7 @@ import type {
   InfraMetricSample,
   InfraTopologySnapshot,
 } from "./infra-types";
+import type { DetectedLocalNetwork, DiscoveryCandidate, NetworkScanResult } from "./infra-discovery-types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_TRACE_API_BASE_URL ?? "http://localhost:4000";
 
@@ -65,6 +67,13 @@ export const infraApi = {
     infraFetch<InfraDeviceDetail>(`/infra/environments/${environmentId}/devices/${deviceId}`),
   createDevice: (environmentId: string, dto: Record<string, unknown>) =>
     infraFetch<InfraDeviceSummary>(`/infra/environments/${environmentId}/devices`, { method: "POST", body: JSON.stringify(dto) }),
+  updateDevice: (environmentId: string, deviceId: string, dto: Record<string, unknown>) =>
+    infraFetch<InfraDeviceSummary>(`/infra/environments/${environmentId}/devices/${deviceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(dto),
+    }),
+  deleteDevice: (environmentId: string, deviceId: string) =>
+    infraFetch<{ ok: true }>(`/infra/environments/${environmentId}/devices/${deviceId}`, { method: "DELETE" }),
   checkDeviceHealth: (environmentId: string, deviceId: string) =>
     infraFetch<{ onlineState: string; checkedAt: string; detail?: string; metricsCollected: number }>(
       `/infra/environments/${environmentId}/devices/${deviceId}/check-health`,
@@ -79,7 +88,11 @@ export const infraApi = {
     ),
 
   createCredential: (environmentId: string, dto: { label: string; protocol: string; deviceId?: string; payload: Record<string, unknown> }) =>
-    infraFetch(`/infra/environments/${environmentId}/credentials`, { method: "POST", body: JSON.stringify(dto) }),
+    infraFetch<InfraCredentialSummary>(`/infra/environments/${environmentId}/credentials`, { method: "POST", body: JSON.stringify(dto) }),
+  listCredentials: (environmentId: string) =>
+    infraFetch<InfraCredentialSummary[]>(`/infra/environments/${environmentId}/credentials`),
+  deleteCredential: (environmentId: string, credentialId: string) =>
+    infraFetch<{ ok: true }>(`/infra/environments/${environmentId}/credentials/${credentialId}`, { method: "DELETE" }),
 
   execCommand: (environmentId: string, deviceName: string, command: string, timeoutMs?: number) =>
     infraFetch<InfraCommandRun>(`/infra/environments/${environmentId}/console/exec`, {
@@ -103,5 +116,31 @@ export const infraApi = {
   listLocalInterfaces: (environmentId: string) =>
     infraFetch<Array<{ name: string; address: string; family: string; internal: boolean }>>(
       `/infra/environments/${environmentId}/discovery/interfaces`,
+    ),
+  detectLocalNetwork: (environmentId: string) =>
+    infraFetch<DetectedLocalNetwork>(`/infra/environments/${environmentId}/discovery/local-network`),
+  scanSubnet: (environmentId: string, cidr?: string) =>
+    infraFetch<NetworkScanResult>(`/infra/environments/${environmentId}/discovery/scan`, {
+      method: "POST",
+      body: JSON.stringify({ cidr }),
+    }),
+  importCandidate: (environmentId: string, candidate: DiscoveryCandidate & { name: string; category: string }) =>
+    infraFetch<{ device: InfraDeviceSummary; action: "created" | "merged" }>(
+      `/infra/environments/${environmentId}/discovery/import`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ip: candidate.ip,
+          mac: candidate.mac,
+          name: candidate.name,
+          category: candidate.category,
+          vendorGuess: candidate.vendorGuess,
+        }),
+      },
+    ),
+
+  listAuditLog: (environmentId: string, limit?: number) =>
+    infraFetch<Array<{ id: string; actor: string; action: string; outcome: string; createdAt: string; detail: unknown }>>(
+      `/infra/environments/${environmentId}/audit-log${limit ? `?limit=${limit}` : ""}`,
     ),
 };

@@ -54,6 +54,22 @@ export class NetworkDiscoveryService {
     return result;
   }
 
+  /** Parses `route -n get default` (macOS/BSD) for the current default
+   * gateway — the strongest available signal for "this is probably the
+   * router," though never asserted as fact (see
+   * `discovery-scan.service.ts`, which only ever labels it a
+   * *candidate*). Returns undefined rather than throwing if there is no
+   * default route (e.g. offline). */
+  async getDefaultGateway(): Promise<string | undefined> {
+    try {
+      const { stdout } = await execFileAsync("route", ["-n", "get", "default"]);
+      const match = /gateway:\s*([\d.]+)/.exec(stdout);
+      return match?.[1];
+    } catch {
+      return undefined;
+    }
+  }
+
   /** Parses `arp -a` (macOS/BSD format: "host (ip) at mac on iface ..."). */
   async listArpNeighbors(): Promise<ArpNeighbor[]> {
     const { stdout } = await execFileAsync("arp", ["-a"]);

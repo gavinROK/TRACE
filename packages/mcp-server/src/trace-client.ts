@@ -22,6 +22,18 @@ export interface TraceClientConfig {
   serviceToken: string;
 }
 
+export interface TraceDevice {
+  id: string;
+  name: string;
+  category: string;
+  ipAddresses: string[];
+  managementProtocols: string[];
+  enrollmentStatus: string;
+  onlineState: string;
+  capabilities: Array<{ protocol: string; capability: string }>;
+  credentials: Array<{ id: string; protocol: string }>;
+}
+
 export class TraceClient {
   constructor(private readonly config: TraceClientConfig) {}
 
@@ -55,7 +67,25 @@ export class TraceClient {
   }
 
   getDevice(environmentId: string, deviceId: string) {
-    return this.request<{ capabilities: unknown }>(`/infra/environments/${environmentId}/devices/${deviceId}`);
+    return this.request<TraceDevice>(`/infra/environments/${environmentId}/devices/${deviceId}`);
+  }
+
+  updateDevice(environmentId: string, deviceId: string, patch: Record<string, unknown>) {
+    return this.request<TraceDevice>(`/infra/environments/${environmentId}/devices/${deviceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+  }
+
+  detectLocalNetwork(environmentId: string) {
+    return this.request<unknown>(`/infra/environments/${environmentId}/discovery/local-network`);
+  }
+
+  scanNetwork(environmentId: string, cidr?: string) {
+    return this.request<unknown>(`/infra/environments/${environmentId}/discovery/scan`, {
+      method: "POST",
+      body: JSON.stringify({ cidr }),
+    });
   }
 
   checkHealth(environmentId: string, deviceId: string) {

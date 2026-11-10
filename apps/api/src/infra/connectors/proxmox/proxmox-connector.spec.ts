@@ -24,7 +24,8 @@ jest.mock("node:https", () => ({
     const key = `${options.method} ${options.path}`;
     const match = responses[key];
     const res = new FakeResponse(match ? match.status : 404);
-    const req = new EventEmitter() as EventEmitter & { end: () => void; destroy: () => void };
+    const req = new EventEmitter() as EventEmitter & { end: () => void; destroy: () => void; write: (chunk: string) => void };
+    req.write = () => {};
     req.end = () => {
       queueMicrotask(() => {
         callback(res);
@@ -60,6 +61,33 @@ describe("ProxmoxConnector", () => {
     await expect(
       connector.getHealth({ deviceId: "pve-1", host: "10.0.0.2", metadata: { node: "beelink" } }),
     ).resolves.toMatchObject({ onlineState: "OFFLINE" });
+  });
+
+  describe("node auto-discovery when metadata.node is not set", () => {
+    const noNodeTarget = {
+      deviceId: "pve-1",
+      host: "10.0.0.2",
+      credential: target.credential,
+    };
+
+    it("auto-discovers the node when Proxmox reports exactly one", async () => {
+      responses["GET /api2/json/nodes"] = { status: 200, body: [{ node: "beelink" }] };
+      responses["GET /api2/json/nodes/beelink/status"] = {
+        status: 200,
+        body: { uptime: 100, cpu: 0.1, memory: { used: 1, total: 2 }, rootfs: { used: 1, total: 4 } },
+      };
+
+      await expect(connector.getHealth(noNodeTarget)).resolves.toMatchObject({ onlineState: "ONLINE" });
+    });
+
+    it("reports OFFLINE (via a clear error) when there is more than one node and none was specified", async () => {
+      responses["GET /api2/json/nodes"] = { status: 200, body: [{ node: "a" }, { node: "b" }] };
+
+      const health = await connector.getHealth(noNodeTarget);
+
+      expect(health.onlineState).toBe("OFFLINE");
+      expect(health.detail).toMatch(/2 Proxmox nodes/);
+    });
   });
 
   it("sends a PVEAPIToken authorization header", async () => {
@@ -145,5 +173,56 @@ describe("ProxmoxConnector", () => {
     const result = await connector.performAction({ ...target, metadata: { node: "beelink", vmid: 101 } }, "start");
 
     expect(result).toEqual({ success: true, detail: "start issued for qemu 101 on beelink" });
+  });
+
+  describe("password/ticket authentication", () => {
+    const passwordTarget = {
+      deviceId: "pve-1",
+      host: "10.0.0.2",
+      metadata: { node: "beelink" },
+      credential: {
+        protocol: "PROXMOX_API" as const,
+        payload: { username: "root@pam", password: "s3cr3t" },
+      },
+    };
+
+    it("exchanges username/password for a ticket, then sends it as a cookie", async () => {
+      responses["POST /api2/json/access/ticket"] = {
+        status: 200,
+        body: { ticket: "PVE:root@pam:TICKET", CSRFPreventionToken: "CSRF123" },
+      };
+      responses["GET /api2/json/nodes/beelink/status"] = {
+        status: 200,
+        body: { uptime: 100, cpu: 0.1, memory: { used: 1, total: 2 }, rootfs: { used: 1, total: 4 } },
+      };
+
+      await connector.getHealth(passwordTarget);
+
+      expect(lastRequestOptions?.headers).toMatchObject({ Cookie: "PVEAuthCookie=PVE:root@pam:TICKET" });
+    });
+
+    it("sends the CSRF token on a POST (performAction) but not on a GET", async () => {
+      responses["POST /api2/json/access/ticket"] = {
+        status: 200,
+        body: { ticket: "PVE:root@pam:TICKET", CSRFPreventionToken: "CSRF123" },
+      };
+      responses["POST /api2/json/nodes/beelink/qemu/101/status/start"] = { status: 200, body: "UPID:..." };
+
+      await connector.performAction({ ...passwordTarget, metadata: { node: "beelink", vmid: 101 } }, "start");
+
+      expect(lastRequestOptions?.headers).toMatchObject({ CSRFPreventionToken: "CSRF123" });
+    });
+
+    it("reports OFFLINE (via the login failure) when the password is wrong", async () => {
+      responses["POST /api2/json/access/ticket"] = { status: 401, body: {} };
+
+      await expect(connector.getHealth(passwordTarget)).resolves.toMatchObject({ onlineState: "OFFLINE" });
+    });
+  });
+
+  it("rejects when a credential has neither a token nor a username/password", async () => {
+    await expect(
+      connector.getHealth({ ...target, credential: { protocol: "PROXMOX_API" as const, payload: {} } }),
+    ).resolves.toMatchObject({ onlineState: "OFFLINE" });
   });
 });

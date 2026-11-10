@@ -69,6 +69,7 @@ export class ProxmoxDiscoveryService {
               macAddresses: [],
               managementProtocols: [],
               notes: JSON.stringify(guest.metadata ?? {}),
+              discoverySource: "discovery:proxmox",
             },
           });
       if (existing) {

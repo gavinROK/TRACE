@@ -175,6 +175,58 @@ export function createServer(client: TraceClient): McpServer {
       jsonResult(await guarded(() => client.getOperationStatus(environmentId as string, runId as string))),
   );
 
+  registerTool(
+    "trace_diagnose_device",
+    "Explain exactly why a device isn't connected — missing management address, missing credential, or genuinely unreachable — rather than a generic error. Use this before trace_execute_command on a device you haven't verified is enrolled.",
+    { environmentId: z.string(), deviceId: z.string() },
+    async ({ environmentId, deviceId }) => {
+      const device = await guarded(() => client.getDevice(environmentId as string, deviceId as string));
+      const diagnosis: string[] = [`Device: ${device.name}`, `Status: ${device.enrollmentStatus} / ${device.onlineState}`];
+      if (device.ipAddresses.length === 0) {
+        diagnosis.push("Missing: a management IP address or hostname — set one from the device's settings panel.");
+      } else if (device.credentials.length === 0) {
+        diagnosis.push(`Missing: a credential — add one for one of ${device.managementProtocols.join(", ") || "a supported protocol"}.`);
+      } else if (device.capabilities.length === 0) {
+        diagnosis.push("A management address and credential are set, but no capability is available yet — check the credential's protocol matches an enrolled management protocol.");
+      } else {
+        diagnosis.push(`Ready: ${device.capabilities.map((c) => `${c.protocol}:${c.capability}`).join(", ")}. If onlineState is still OFFLINE/UNKNOWN, call trace_get_health to check reachability right now.`);
+      }
+      return jsonResult({ device: { id: device.id, name: device.name, ipAddresses: device.ipAddresses, enrollmentStatus: device.enrollmentStatus, onlineState: device.onlineState }, diagnosis: diagnosis.join("\n") });
+    },
+  );
+
+  registerTool(
+    "trace_detect_local_network",
+    "Detect the local machine's active network interface, subnet, and default gateway — the first step of network discovery.",
+    { environmentId: z.string() },
+    async ({ environmentId }) => jsonResult(await guarded(() => client.detectLocalNetwork(environmentId as string))),
+  );
+
+  registerTool(
+    "trace_scan_network",
+    "Scan a subnet for devices (ARP/neighbor-table inspection plus an optional nmap ping sweep — no port scanning). The subnet must be one TRACE's own machine is on; call trace_detect_local_network first to find it. Only scans what's passed in cidr.",
+    { environmentId: z.string(), cidr: z.string().optional() },
+    async ({ environmentId, cidr }) => jsonResult(await guarded(() => client.scanNetwork(environmentId as string, cidr as string | undefined))),
+  );
+
+  registerTool(
+    "trace_update_device",
+    "Update a device's non-secret inventory settings (name, category, IP addresses, management port/protocols, tags, notes). Never accepts or stores a credential — use the TRACE UI to enroll one.",
+    {
+      environmentId: z.string(),
+      deviceId: z.string(),
+      name: z.string().optional(),
+      category: z.string().optional(),
+      ipAddresses: z.array(z.string()).optional(),
+      managementPort: z.number().optional(),
+      managementProtocols: z.array(z.string()).optional(),
+      tags: z.array(z.string()).optional(),
+      notes: z.string().optional(),
+    },
+    async ({ environmentId, deviceId, ...patch }) =>
+      jsonResult(await guarded(() => client.updateDevice(environmentId as string, deviceId as string, patch))),
+  );
+
   return server;
 }
 

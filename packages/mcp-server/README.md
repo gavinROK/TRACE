@@ -23,9 +23,13 @@ raw stored credential: TRACE's API responses never include one.
 | `trace_execute_group_command` | Run a shell command across multiple devices (requires `confirm: true` for more than one target). |
 | `trace_perform_action` | Start/stop/reboot a VM, etc. (destructive actions require `confirm: true`). |
 | `trace_get_operation_status` | Check the status of a previously started command run. |
+| `trace_diagnose_device` | Explain exactly why a device isn't connected (missing address, missing credential, unreachable) instead of a generic error. |
+| `trace_detect_local_network` | Detect TRACE's own machine's active interface, subnet, and default gateway. |
+| `trace_scan_network` | Scan a subnet for devices (ARP + optional nmap ping sweep, no port scanning). |
+| `trace_update_device` | Update a device's non-secret settings (name, IPs, port, protocols, tags, notes) — never accepts a credential. |
 
 Not implemented (see the root README's "Current limitations"):
-`trace_get_services`, interactive terminal sessions.
+`trace_get_services`, interactive terminal sessions, importing a discovered candidate into inventory (use the UI's Discover My Network flow for that — it needs an explicit per-candidate choice, which doesn't fit a single tool call well).
 
 ## Setup
 

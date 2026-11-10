@@ -5,6 +5,7 @@ import { AuditLogService } from "../audit/audit-log.service";
 import { ConnectorRegistryService } from "../connectors/connector-registry.service";
 import { CredentialsService } from "../credentials/credentials.service";
 import { InfraDevicesService } from "../devices/devices.service";
+import { withManagementPort } from "../connectors/apply-management-port";
 import { runWithConcurrency } from "./concurrency";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -65,7 +66,7 @@ export class CommandExecutionService {
       if (!connector.executeCommand) throw new BadRequestException("SSH connector does not support command execution");
 
       const result = await connector.executeCommand(
-        { deviceId: device.id, host, credential },
+        { deviceId: device.id, host, credential: withManagementPort(credential, device.managementPort) },
         command,
         { timeoutMs, signal: controller.signal },
       );

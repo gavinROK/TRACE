@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { NavBadge } from "@/components/NavBadge";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -15,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "TRACE",
-  description: "Developer and security intelligence org graph",
+  description: "Unified infrastructure management and developer intelligence",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -24,10 +23,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col bg-slate-950">
-        {children}
-        <NavBadge />
-      </body>
+      <body className="min-h-full flex flex-col bg-slate-950">{children}</body>
     </html>
   );
 }
