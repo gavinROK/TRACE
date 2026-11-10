@@ -7,8 +7,9 @@ TRACE is two products in one local-first, open-source monorepo:
    employee-endpoint devices as an interactive node graph.
 2. **Infrastructure control plane** — discovers, enrolls, monitors, and
    administers real infrastructure (servers, VMs, hypervisors, switches,
-   printers, …) through a unified device model, a command console, and an
-   MCP server so Claude can operate it too.
+   printers, …) through a unified device model, a command console, a
+   native AI chat assistant (your own Anthropic API key, configured in
+   Settings), and an MCP server so Claude Code can operate it too.
 
 They share a database connection and an HTTP server, nothing else — see
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the two are kept

@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ActionsModule } from "./actions/actions.module";
+import { AiModule } from "./ai/ai.module";
 import { AuditModule } from "./audit/audit.module";
 import { TraceAuthModule } from "./auth/trace-auth.module";
 import { ConnectorsModule } from "./connectors/connectors.module";
@@ -30,6 +31,7 @@ import { TopologyModule } from "./topology/topology.module";
     ActionsModule,
     MonitoringModule,
     TopologyModule,
+    AiModule,
   ],
 })
 export class InfraModule {}

@@ -365,6 +365,7 @@ model InfraEnvironment {
   commandRuns  InfraCommandRun[]
   auditEntries InfraAuditLogEntry[]
   relationships InfraRelationship[]
+  aiConversations AiConversation[]
 
   @@map("infra_environments")
 }
@@ -665,4 +666,146 @@ model TraceSession {
   expiresAt DateTime
 
   @@map("trace_sessions")
+}
+
+// --- Native AI assistant (TRACE v0.3) ---
+// The assistant never gets its own copy of infrastructure state or its
+// own connector logic — see apps/api/src/infra/ai. These models exist
+// only to persist conversations and provider configuration; every tool
+// call the assistant makes reads/writes through the same services the
+// browser console already uses.
+
+enum AiProviderKind {
+  ANTHROPIC
+  /// Reserved for a future provider — see ai/providers/ai-provider.interface.ts.
+  /// Not implemented; selecting this has no effect yet.
+  OPENAI
+  /// Reserved for a future local-model provider. Not implemented.
+  LOCAL
+}
+
+/// One encrypted API key per provider (same AES-256-GCM construction as
+/// InfraCredential, via the identical secret-cipher.ts + MasterKeyStore —
+/// no second encryption implementation). Single operator, so at most one
+/// row per provider ever exists.
+model AiProviderSetting {
+  id               String         @id @default(cuid())
+  provider         AiProviderKind @unique
+  encryptedApiKey  String
+  iv               String
+  authTag          String
+  /// The model id the operator picked in Settings, e.g. "claude-sonnet-5".
+  /// Null until they choose one; the chat UI falls back to a maintained
+  /// default (see ai/providers/anthropic-models.ts) when null.
+  selectedModel    String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  @@map("ai_provider_settings")
+}
+
+/// One chat thread. `actor` is the owning TraceUser's guard-assigned actor
+/// string (e.g. "user:<id>") — conversations are private to the operator
+/// who started them, same ownership model as everything else in TRACE
+/// (single-operator today; environment-scoped data already isolates
+/// per-tenant without a role table nothing uses yet).
+model AiConversation {
+  id                String            @id @default(cuid())
+  environment       InfraEnvironment  @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId     String
+  actor             String
+  title             String?
+  /// A snapshot of the device selected in the UI when the conversation
+  /// started — kept as plain fields (not a relation) so a later device
+  /// rename/delete never breaks history; see PRODUCT_SPEC section 8.
+  deviceContextId   String?
+  deviceContextName String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  messages       AiMessage[]
+  pendingActions AiPendingAction[]
+
+  @@index([environmentId, actor])
+  @@map("ai_conversations")
+}
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+  /// A tool result fed back into the model — never user-authored text,
+  /// always structured output from a TRACE service call.
+  TOOL
+}
+
+/// One turn in a conversation. `content` is the rendered markdown text
+/// shown to the user (empty string for a pure tool-call turn with no
+/// prose). `toolCalls`/`toolResults` are redacted (see
+/// ai/secret-redaction.ts) before this row is ever written — nothing
+/// here can contain a decrypted credential, because no tool handler
+/// this assistant can call ever receives one (see devices.service.ts /
+/// credentials.service.ts: no controller-reachable method returns a
+/// decrypted payload, and the AI tool layer only calls controller-
+/// reachable methods).
+model AiMessage {
+  id               String         @id @default(cuid())
+  conversation     AiConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId   String
+  role             AiMessageRole
+  content          String
+  toolCalls        Json?
+  toolResults      Json?
+  model            String?
+  inputTokens      Int?
+  outputTokens     Int?
+  estimatedCostUsd Float?
+  createdAt        DateTime       @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("ai_messages")
+}
+
+/// How a tool call was classified at the moment it was proposed — see
+/// ai/ai-tools.registry.ts's ACTION_CLASSIFICATION table, PRODUCT_SPEC
+/// v0.3 section 5.
+enum AiActionClassification {
+  READ_ONLY
+  ADMINISTRATIVE
+  DESTRUCTIVE
+}
+
+enum AiPendingActionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  /// Reserved for a future TTL sweep; nothing sets this yet.
+  EXPIRED
+}
+
+/// An ADMINISTRATIVE or DESTRUCTIVE tool call the assistant proposed but
+/// did not execute. Created instead of executing the tool; only a
+/// separate, human-initiated HTTP call to
+/// POST .../ai/pending-actions/:id/approve (never something the model's
+/// own output can trigger — see ai-approval.service.ts) flips this to
+/// APPROVED and actually runs it. `requestedBy` is always the
+/// conversation's own actor (the assistant never acts as a different
+/// user); `decidedBy` must be a browser-session actor — the guard never
+/// assigns the MCP service-token actor to this endpoint.
+model AiPendingAction {
+  id             String                  @id @default(cuid())
+  conversation   AiConversation          @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  conversationId String
+  environmentId  String
+  toolName       String
+  toolInput      Json
+  classification AiActionClassification
+  status         AiPendingActionStatus   @default(PENDING)
+  requestedBy    String
+  decidedBy      String?
+  decidedAt      DateTime?
+  resultJson     Json?
+  createdAt      DateTime                @default(now())
+
+  @@index([conversationId])
+  @@map("ai_pending_actions")
 }

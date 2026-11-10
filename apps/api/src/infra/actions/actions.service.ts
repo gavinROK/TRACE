@@ -9,8 +9,10 @@ import { withManagementPort } from "../connectors/apply-management-port";
 /** Actions that disrupt a running workload — PRODUCT_SPEC.md section 12:
  * these need an explicit `confirm: true`, not just a valid session. A
  * plain `start` is left out: it can't disrupt anything that's already
- * stopped. */
-const DESTRUCTIVE_ACTIONS = new Set(["stop", "shutdown", "reboot"]);
+ * stopped. Exported so the AI tool registry (ai/ai-tools.registry.ts)
+ * classifies perform_action identically to this service, instead of
+ * maintaining a second list that could drift out of sync. */
+export const DESTRUCTIVE_ACTIONS = new Set(["stop", "shutdown", "reboot"]);
 
 @Injectable()
 export class ActionsService {

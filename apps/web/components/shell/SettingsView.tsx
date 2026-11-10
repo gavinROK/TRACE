@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { infraApi } from "@/lib/infra-api";
 import type { InfraCredentialSummary, InfraEnvironment } from "@/lib/infra-types";
+import { AiSettingsPanel } from "@/components/ai/AiSettingsPanel";
 
 interface SettingsViewProps {
   actor: string;
@@ -39,6 +40,13 @@ export function SettingsView({ actor, environment, onLogout }: SettingsViewProps
       <section className="mt-6">
         <h2 className="text-sm font-semibold text-slate-300">Environment</h2>
         <p className="mt-1 text-xs text-slate-400">{environment.name} ({environment.slug}) — {environment.deviceCount} devices</p>
+      </section>
+
+      <section className="mt-6">
+        <h2 className="text-sm font-semibold text-slate-300">AI Assistant</h2>
+        <div className="mt-2">
+          <AiSettingsPanel />
+        </div>
       </section>
 
       <section className="mt-6">

@@ -32,6 +32,7 @@ control plane" section comment for the full data model.
 | `topology` | Assembles the graph (nodes + verified/inferred edges) the frontend renders. |
 | `audit` | The security/audit trail — every credential change, command, and action. |
 | `auth` | Password + WebAuthn login, cookie sessions, and the combined guard the MCP service token also goes through. |
+| `ai` | The native AI assistant (TRACE v0.3) — see "Native AI assistant" below. |
 
 Every one of these is a real NestJS module with its own controller,
 service, and Jest tests — not a stub. `src/infra/infra.module.ts` wires
@@ -66,6 +67,60 @@ single enforcement point for "don't show a control that isn't real."
   router management, JetKVM, Bambu Lab. Each needs its actual protocol
   verified against the real device before a connector is written — see
   "Known limitations" below.
+
+## Native AI assistant (`apps/api/src/infra/ai`, `apps/web/components/ai`)
+
+A consumer of the modules above, not a second implementation of them —
+every tool the assistant can call (`ai-tools.registry.ts`) dispatches to
+the same `EnvironmentsService`/`InfraDevicesService`/`DevicePollingService`/
+`TopologyService`/`CommandExecutionService`/`ActionsService`/
+`DiscoveryScanService` methods the browser UI and `packages/mcp-server`
+already use — no second Proxmox/SSH/SNMP client exists anywhere in this
+module. It is also a deliberately separate integration surface from the
+MCP server, not layered on top of it: `AiController` refuses the MCP
+service-token actor (`claude-mcp`) on every route, since this assistant
+is for using TRACE directly in the browser, without opening Claude Code.
+
+- **Providers** (`ai/providers`) — `AiProvider` is the only interface
+  `ai-chat.service.ts` and the tool registry know about; `AnthropicProviderService`
+  is the one implementation today. Adding OpenAI/a local model later
+  means a new provider service plus a branch in `AiSettingsService`,
+  never a change to the orchestration code.
+- **Tool classification** (`ai-tools.registry.ts`) — every tool is
+  `READ_ONLY` (auto-executes), `ADMINISTRATIVE`, or `DESTRUCTIVE`.
+  `perform_action`'s classification is computed from its `action`
+  argument against `ActionsService.DESTRUCTIVE_ACTIONS` (exported,
+  imported — not a second list that could drift).
+- **Approval enforcement** (`ai-approval.service.ts`) — structural, not
+  a prompt instruction: creating an `AiPendingAction` happens inside the
+  model's own tool-call loop; deciding one (`approve`/`reject`) only
+  happens from `AiController`'s dedicated HTTP endpoints, reachable only
+  by a real browser-session request. The model's own output has no code
+  path that reaches the decide method — `AiApprovalService.decide` also
+  explicitly refuses a `claude-mcp`-prefixed decider as defense in depth.
+- **Conversation persistence** (`ai-conversations.service.ts`) —
+  `AiConversation`/`AiMessage`/`AiPendingAction` in Postgres, scoped to
+  `(environmentId, actor)`; every mutation checks ownership first.
+- **Secret redaction** (`secret-redaction.ts`) — applied to tool
+  inputs/outputs before they're persisted or fed back to the model, as
+  defense in depth. The primary control is structural: no tool handler
+  ever calls `CredentialsService.getDecryptedForDevice` or returns a
+  connector credential — every handler calls the same controller-
+  reachable service methods the REST API itself exposes.
+- **Known, stated scope cut**: approving a pending action executes it
+  and persists the result as its own `TOOL`-role message, but does not
+  resume the paused Anthropic tool-use turn so the model can narrate the
+  result in its own next sentence — that turn's provider-message history
+  already ended when the stream yielded `pending_approval`. The UI
+  renders the result as its own card; asking a follow-up question (e.g.
+  "is it back online now?") works normally and the model can call
+  `check_device_health` etc. to see the aftermath itself.
+- **Frontend** (`apps/web/components/ai`) — `AiChatPanel` is mounted
+  once in `Workspace.tsx`, not per-view, so it's reachable from every
+  view. `MarkdownLite` is a small hand-rolled renderer (fenced code,
+  inline code, bold/italic, links, lists, headers) rather than a
+  `react-markdown` dependency — `apps/web` has no Markdown dependency
+  today and the assistant's responses don't need tables/images/footnotes.
 
 ## Security model
 
@@ -226,3 +281,25 @@ single enforcement point for "don't show a control that isn't real."
 - **The topology layout (`lib/infra-layout.ts`) is a simple BFS layered
   layout**, fine for a homelab-scale topology (tens of devices); a denser
   environment would want a real graph-layout library.
+- **Approving an AI-proposed action does not resume that turn's model
+  conversation for a narrated follow-up** — see the AI assistant
+  section above. The result is a UI card, not a generated sentence;
+  genuinely a scope cut, not a bug.
+- **The AI assistant has not been exercised end to end with a real
+  Anthropic API key in this environment** — the full tool-use/approval/
+  persistence loop is covered by 53 Jest tests against a mocked
+  `AnthropicProviderService`, and the actor/authorization boundary was
+  confirmed live over real HTTP (unauthenticated → 401, the MCP service
+  token → 403 with the expected message), but no real `sk-ant-...` key
+  has been entered into Settings and used to hold an actual streamed
+  conversation here. Do that once before relying on it.
+- **Secret redaction in `ai/secret-redaction.ts` is pattern-based
+  defense in depth, not the primary control** — see that file's own
+  header comment. It will not catch every possible secret shape; the
+  real guarantee is structural (no AI tool handler ever receives a
+  decrypted credential in the first place).
+- **No rate-limit/retry logic was hand-written for the Anthropic
+  provider** — `@anthropic-ai/sdk`'s own `maxRetries`/`timeout` client
+  options are used as-is; a 429 that outlives the SDK's own retries
+  surfaces to the user as a plain error with `retryable: true`, with no
+  additional backoff loop in TRACE's own code.

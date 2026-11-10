@@ -9,5 +9,6 @@ import { TopologyService } from "./topology.service";
   imports: [PrismaModule, TraceAuthModule, InfraDevicesModule],
   controllers: [TopologyController],
   providers: [TopologyService],
+  exports: [TopologyService],
 })
 export class TopologyModule {}

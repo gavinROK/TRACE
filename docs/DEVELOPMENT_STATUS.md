@@ -1,6 +1,6 @@
 # TRACE Development Status
 
-Last updated: 2026-11-09 (autonomous engineering session, branch `feature/infrastructure-control-plane`, continued live on the operator's own MacBook)
+Last updated: 2026-11-10 (autonomous engineering session, branch `feature/infrastructure-control-plane`, continued live on the operator's own MacBook — OSS integration research, then TRACE v0.3's native AI assistant)
 
 This document is the single source of truth for what exists, what's in
 progress, and what's next. Read this first in any new session before making
@@ -1302,6 +1302,120 @@ test's own restoration step already correctly did.
   clean up, breaking the idempotency the rest of the live suite
   maintains. Both manually-created verification devices were deleted
   from the database afterward.
+
+## OSS integration research (between Phase 4 follow-up and Phase 5)
+
+Before building Phase 5, a research-only pass evaluated LibreNMS,
+NetBox (+ NetBox Labs' commercial products), Zabbix, FreeSDN, Argus,
+and a broader ecosystem list (Nmap, net-snmp, Prometheus, OpenTelemetry,
+Grafana, Ansible, Nornir, Netmiko, Nautobot) against TRACE's own
+architecture. Full report, citations, and the build-vs-integrate
+recommendation: `docs/OSS_INTEGRATION_EVALUATION.md`. Headline finding:
+none of the five named platforms should be embedded (each requires its
+own database/web UI/stack, three are Linux-only) — TRACE's own
+lightweight footprint is already the right shape for its target scale.
+No code changed in that pass; the three "low-risk improvement" ideas it
+proposed (SNMP LLDP/CDP topology walks, a connector maturity-tier
+label, consuming NetBox's CC0 Device Type Library for vendor lookup)
+were not implemented before Phase 5 superseded them as the next
+priority — still open, see that report's §10.
+
+## Phase 5 — Native AI assistant (TRACE v0.3)
+
+A native AI chat assistant built directly into TRACE (`apps/api/src/infra/ai`,
+`apps/web/components/ai`), so the operator can ask about and act on
+their infrastructure in natural language without opening Claude Code.
+See `docs/ARCHITECTURE.md`'s "Native AI assistant" section for the
+module breakdown, security model, and the known scope cuts — this entry
+only covers what changed and what was verified.
+
+- [x] **Provider abstraction + Anthropic implementation** —
+      `AiProvider` interface; `AnthropicProviderService` wraps
+      `@anthropic-ai/sdk` (added as a new dependency, pinned `^1.7.0`),
+      using the SDK's own streaming (`messages.stream`) and model-list
+      (`models.list`) support. Model IDs are not hardcoded as the
+      primary source: the live Models API is preferred, falling back to
+      a small maintained list (`ai/providers/anthropic-models.ts`) —
+      pricing in that fallback list was confirmed against
+      `platform.claude.com/docs/en/about-claude/pricing` on 2026-11-10,
+      not invented.
+- [x] **Tool registry reusing existing services** — 16 tools
+      (list/get environments/devices/topology/metrics/audit-log,
+      health checks, network discovery, VM inventory, command
+      execution, device actions, device updates, an honest
+      not-implemented response for alerts) — every handler calls an
+      existing `*Service` method, never a connector or credential
+      directly. No separate Proxmox/SSH/SNMP client was written for
+      this subsystem.
+- [x] **Three-tier approval enforcement** (READ_ONLY auto-runs;
+      ADMINISTRATIVE/DESTRUCTIVE create an `AiPendingAction` instead of
+      executing) — enforced structurally, not by a system prompt: the
+      model's tool-call loop can only *create* a pending action;
+      deciding one is a separate method reachable only from a
+      dedicated, guarded HTTP endpoint. Live-verified over real HTTP
+      that the MCP service-token actor is rejected (403) from every AI
+      route, including approve/reject.
+- [x] **Conversation persistence** — `AiConversation`/`AiMessage`/
+      `AiPendingAction` Prisma models (migration
+      `20261110065047_add_ai_assistant`), scoped to
+      `(environmentId, actor)`; ownership checked before every read or
+      mutation. Tool calls/results are redacted
+      (`ai/secret-redaction.ts`) before being persisted.
+- [x] **Settings screen for the API key** — embedded in the existing
+      Settings view (`AiSettingsPanel`), not a separate page or a chat
+      command. The key is encrypted with the exact same AES-256-GCM +
+      MasterKeyStore construction `InfraCredential` already uses — no
+      second encryption implementation. `AiSettingsService.getStatus`
+      never returns the key itself, only whether one is configured.
+- [x] **Chat panel UI** — `AiChatPanel`, mounted once in `Workspace.tsx`
+      (not per-view) so it's reachable from every view per the product
+      brief; streaming via hand-parsed SSE (no EventSource — it can't
+      POST a body), a stop-generation button that aborts the fetch,
+      tool-execution indicators, inline approval cards, and a
+      dependency-free Markdown-lite renderer (`MarkdownLite.tsx`) —
+      `apps/web` had no Markdown library before this, and
+      `react-markdown`'s dependency tree was judged disproportionate
+      for fenced code/bold/italic/links/lists, which is all the
+      assistant's responses actually need.
+- [x] **Device context awareness** — selecting a device in the UI
+      (`Workspace`'s existing `selectedDeviceId`) is passed into every
+      new conversation and every message as `deviceContextId`/Name,
+      folded into the system prompt so "what's using the most memory on
+      this?" resolves to the selected device without TRACE asking which
+      machine is meant.
+- [x] **Rate limiting** — `@nestjs/throttler` (new dependency, pinned
+      `^6.7.1`, root `package.json` too — same npm-hoisting lesson as
+      `@nestjs/schedule`), scoped to `AiController` only via a local
+      `ThrottlerGuard`, not registered globally; the streaming endpoint
+      is additionally capped at 12 requests/minute.
+
+### What's verified vs. not
+
+- **Verified**: `tsc --noEmit` clean (api, web, mcp-server); ESLint
+  clean (api, web); `npm run build` clean for `apps/api`; `next build
+  --webpack` clean (the documented Turbopack-sandbox-panic workaround,
+  unrelated to this phase); the full backend Jest suite (47 suites, 284
+  tests — up from 40/231 before this phase, no regressions) including
+  53 new tests across `secret-redaction`, `ai-settings.service`,
+  `ai-tools.registry`, `ai-approval.service`, `ai-chat.service`,
+  `ai-conversations.service`, and `ai.controller`; the MCP server's own
+  suite (2 suites, 8 tests) unaffected. The compiled server was actually
+  booted (`node dist/main.js`) and mapped every new AI route; a real
+  unauthenticated request got 401 and a real MCP-service-token request
+  got 403 with the expected message, both over live HTTP. An existing
+  `next dev` instance (left running from a prior session, not restarted
+  for this check) picked up every new component via hot-reload and kept
+  serving clean HTML with no compile-error markers.
+- **Not yet verified**: a real end-to-end conversation with a real
+  Anthropic API key entered into Settings — the whole tool-use/
+  streaming/approval loop is covered by mocked-provider Jest tests, not
+  a live model call in this environment, since doing so would incur
+  real, approval-gated API cost. Click through the UI yourself once a
+  key is added: send a message, approve a pending action, confirm
+  conversation history survives a reload. Also not exercised: the
+  `@nestjs/throttler` rate limit actually tripping under load (wiring
+  confirmed via a clean app boot with `ThrottlerModule` initialized, not
+  by sending 13 requests in a minute).
 
 <!-- New entries go above this line -->
 

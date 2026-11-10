@@ -14,9 +14,10 @@ interface SidebarProps {
   activeView: ShellView;
   onSelectView: (view: ShellView) => void;
   onOpenConsole: () => void;
+  onOpenAi: () => void;
 }
 
-export function Sidebar({ activeView, onSelectView, onOpenConsole }: SidebarProps) {
+export function Sidebar({ activeView, onSelectView, onOpenConsole, onOpenAi }: SidebarProps) {
   return (
     <nav className="flex w-48 shrink-0 flex-col border-r border-slate-800 bg-slate-950 py-3">
       <div className="px-4 pb-3 text-sm font-semibold tracking-wide text-slate-200">TRACE</div>
@@ -41,6 +42,15 @@ export function Sidebar({ activeView, onSelectView, onOpenConsole }: SidebarProp
           >
             <span className="w-4 text-center text-xs">▸</span>
             Console
+          </button>
+        </li>
+        <li>
+          <button
+            onClick={onOpenAi}
+            className="flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+          >
+            <span className="w-4 text-center text-xs">✦</span>
+            AI Assistant
           </button>
         </li>
       </ul>

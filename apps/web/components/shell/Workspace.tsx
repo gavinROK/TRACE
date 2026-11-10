@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { infraApi } from "@/lib/infra-api";
 import type { InfraDeviceSummary, InfraEnvironment, InfraTopologySnapshot } from "@/lib/infra-types";
+import { AiChatPanel } from "@/components/ai/AiChatPanel";
 import { Sidebar, type ShellView } from "./Sidebar";
 import { BottomTerminal } from "./BottomTerminal";
 import { DeviceRightPanel } from "./DeviceRightPanel";
@@ -27,6 +28,7 @@ export function Workspace({ actor, onLogout, environment, environments, onSelect
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   const [terminalCollapsed, setTerminalCollapsed] = useState(true);
   const [terminalTarget, setTerminalTarget] = useState<string | undefined>(undefined);
+  const [aiCollapsed, setAiCollapsed] = useState(true);
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
   const [devices, setDevices] = useState<InfraDeviceSummary[]>([]);
   const [snapshot, setSnapshot] = useState<InfraTopologySnapshot | null>(null);
@@ -73,7 +75,12 @@ export function Workspace({ actor, onLogout, environment, environments, onSelect
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar activeView={activeView} onSelectView={setActiveView} onOpenConsole={() => setTerminalCollapsed(false)} />
+        <Sidebar
+          activeView={activeView}
+          onSelectView={setActiveView}
+          onOpenConsole={() => setTerminalCollapsed(false)}
+          onOpenAi={() => setAiCollapsed(false)}
+        />
 
         <div className="flex flex-1 flex-col overflow-hidden">
           <div className="flex flex-1 overflow-hidden">
@@ -128,6 +135,18 @@ export function Workspace({ actor, onLogout, environment, environments, onSelect
                 onChanged={refresh}
               />
             )}
+
+            <AiChatPanel
+              environmentId={environment.id}
+              selectedDeviceId={selectedDeviceId}
+              selectedDeviceName={devices.find((d) => d.id === selectedDeviceId)?.name ?? null}
+              collapsed={aiCollapsed}
+              onToggleCollapsed={() => setAiCollapsed((v) => !v)}
+              onOpenSettings={() => {
+                setAiCollapsed(true);
+                setActiveView("settings");
+              }}
+            />
           </div>
 
           <BottomTerminal
