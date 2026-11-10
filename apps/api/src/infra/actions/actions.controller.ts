@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { AiActionClassification } from "@prisma/client";
 import { InfraAuthenticatedRequest, TraceAccessGuard } from "../auth/trace-access.guard";
 import { ApprovalsService } from "../approvals/approvals.service";
@@ -10,8 +10,8 @@ import { PerformActionDto } from "./dto/perform-action.dto";
 @Controller("infra/environments/:environmentId/devices/:deviceId/actions")
 export class ActionsController {
   constructor(
-    private readonly actionsService: ActionsService,
-    private readonly approvals: ApprovalsService,
+    @Inject(ActionsService) private readonly actionsService: ActionsService,
+    @Inject(ApprovalsService) private readonly approvals: ApprovalsService,
   ) {}
 
   /**

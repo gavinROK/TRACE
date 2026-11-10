@@ -9,7 +9,7 @@ const DEDUPE_WINDOW_HOURS = 24;
 export class SecurityDetectionService {
   constructor(
     @Inject(SECURITY_RULES) private readonly rules: SecurityRule[],
-    private readonly prisma: PrismaService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
 
   /**

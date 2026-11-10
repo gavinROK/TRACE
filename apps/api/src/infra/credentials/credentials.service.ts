@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import type { ConnectorCredential } from "../connectors/connector.types";
 import { CreateCredentialDto } from "./dto/create-credential.dto";
@@ -16,8 +16,8 @@ import { decryptSecret, encryptSecret } from "./secret-cipher";
 @Injectable()
 export class CredentialsService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly masterKeyStore: MasterKeyStore,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(MasterKeyStore) private readonly masterKeyStore: MasterKeyStore,
   ) {}
 
   async create(environmentId: string, dto: CreateCredentialDto) {

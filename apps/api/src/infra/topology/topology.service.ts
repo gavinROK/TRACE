@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { InfraDevicesService } from "../devices/devices.service";
 
@@ -11,8 +11,8 @@ import { InfraDevicesService } from "../devices/devices.service";
 @Injectable()
 export class TopologyService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly devicesService: InfraDevicesService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(InfraDevicesService) private readonly devicesService: InfraDevicesService,
   ) {}
 
   async getSnapshot(environmentId: string) {

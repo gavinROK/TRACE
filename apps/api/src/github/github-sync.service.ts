@@ -21,7 +21,7 @@ export class GithubSyncService {
 
   constructor(
     @Inject(GITHUB_API_CLIENT) private readonly githubClient: GithubApiClient,
-    private readonly prisma: PrismaService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
 
   async syncInstallation(installation: InstallationRef): Promise<SyncResult> {

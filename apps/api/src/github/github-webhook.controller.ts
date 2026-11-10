@@ -1,13 +1,4 @@
-import {
-  Controller,
-  Headers,
-  Logger,
-  Post,
-  Req,
-  RawBodyRequest,
-  ServiceUnavailableException,
-  UnauthorizedException,
-} from "@nestjs/common";
+import { Controller, Headers, Inject, Logger, Post, RawBodyRequest, Req, ServiceUnavailableException, UnauthorizedException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import type { Request } from "express";
 import { PrismaService } from "../prisma/prisma.service";
@@ -31,8 +22,8 @@ export class GithubWebhookController {
   private readonly logger = new Logger(GithubWebhookController.name);
 
   constructor(
-    private readonly config: ConfigService,
-    private readonly prisma: PrismaService,
+    @Inject(ConfigService) private readonly config: ConfigService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
 
   @Post()

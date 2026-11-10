@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { InfraDeviceCategory, InfraManagementProtocol, InfraRelationshipType } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
@@ -24,10 +24,10 @@ export interface ProxmoxDiscoveryResult {
 @Injectable()
 export class ProxmoxDiscoveryService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly connectorRegistry: ConnectorRegistryService,
-    private readonly credentialsService: CredentialsService,
-    private readonly auditLog: AuditLogService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ConnectorRegistryService) private readonly connectorRegistry: ConnectorRegistryService,
+    @Inject(CredentialsService) private readonly credentialsService: CredentialsService,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
   async discoverFromHypervisor(environmentId: string, actor: string, hypervisorDeviceId: string): Promise<ProxmoxDiscoveryResult> {

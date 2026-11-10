@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Post, Req, Res, UseGuards } from "@nestjs/common";
 import type { Response } from "express";
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from "@simplewebauthn/server";
 import { EmailOnlyDto, EmailPasswordDto } from "./dto/credentials.dto";
@@ -17,8 +17,8 @@ const COOKIE_OPTIONS = {
 @Controller("infra/auth")
 export class TraceAuthController {
   constructor(
-    private readonly authService: TraceAuthService,
-    private readonly webauthnService: WebauthnService,
+    @Inject(TraceAuthService) private readonly authService: TraceAuthService,
+    @Inject(WebauthnService) private readonly webauthnService: WebauthnService,
   ) {}
 
   @Get("status")

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { AuditLogService } from "../audit/audit-log.service";
 import { InfraAuthenticatedRequest, TraceAccessGuard } from "../auth/trace-access.guard";
 import { CreateEnvironmentDto } from "./dto/create-environment.dto";
@@ -8,8 +8,8 @@ import { EnvironmentsService } from "./environments.service";
 @Controller("infra/environments")
 export class EnvironmentsController {
   constructor(
-    private readonly environmentsService: EnvironmentsService,
-    private readonly auditLog: AuditLogService,
+    @Inject(EnvironmentsService) private readonly environmentsService: EnvironmentsService,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
   @Get()

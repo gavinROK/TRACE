@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
+import { Inject, Injectable, NotFoundException, UnauthorizedException } from "@nestjs/common";
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -39,7 +39,7 @@ export class WebauthnService {
     return process.env.TRACE_WEBAUTHN_ORIGIN ?? "http://localhost:3000";
   }
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async generateRegistrationOptionsForUser(userId: string) {
     const user = await this.prisma.traceUser.findUnique({

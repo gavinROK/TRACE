@@ -1,6 +1,7 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
+import { AuditLogService } from "../audit/audit-log.service";
 import { ConnectorRegistryService } from "../connectors/connector-registry.service";
 import { CredentialsService } from "../credentials/credentials.service";
 import { CreateInfraDeviceDto } from "./dto/create-device.dto";
@@ -17,9 +18,10 @@ type InfraDeviceWithRelations = Prisma.InfraDeviceGetPayload<typeof WITH_RELATIO
 @Injectable()
 export class InfraDevicesService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly connectorRegistry: ConnectorRegistryService,
-    private readonly credentialsService: CredentialsService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ConnectorRegistryService) private readonly connectorRegistry: ConnectorRegistryService,
+    @Inject(CredentialsService) private readonly credentialsService: CredentialsService,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
   async list(environmentId: string) {
@@ -90,12 +92,29 @@ export class InfraDevicesService {
     return this.toSummary(device);
   }
 
-  async update(environmentId: string, deviceId: string, dto: UpdateInfraDeviceDto) {
+  /**
+   * `actor` is required (not read off a request in here, since this is
+   * also the exact method `AiToolsRegistryService`'s `update_device`
+   * handler calls once a human has approved an MCP/chat-proposed edit —
+   * logging here, rather than in each caller, is the one place that
+   * covers both the direct-browser-edit path and the approved-approval
+   * execution path with a single audit record of what actually changed.
+   */
+  async update(environmentId: string, deviceId: string, actor: string, dto: UpdateInfraDeviceDto) {
     await this.findOrThrow(environmentId, deviceId);
     const device = await this.prisma.infraDevice.update({
       where: { id: deviceId },
       data: dto,
       ...WITH_RELATIONS,
+    });
+    await this.auditLog.record({
+      environmentId,
+      actor,
+      action: "device.update",
+      targetType: "InfraDevice",
+      targetId: deviceId,
+      outcome: "success",
+      detail: { fields: Object.keys(dto) },
     });
     return this.toSummary(device);
   }

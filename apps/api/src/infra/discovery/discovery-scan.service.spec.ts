@@ -123,7 +123,7 @@ describe("DiscoveryScanService", () => {
 
       expect(result.action).toBe("merged");
       expect(devicesService.create).not.toHaveBeenCalled();
-      expect(devicesService.update).toHaveBeenCalledWith("env1", "existing1", { macAddresses: ["11:22:33:44:55:66"] });
+      expect(devicesService.update).toHaveBeenCalledWith("env1", "existing1", "user:u1", { macAddresses: ["11:22:33:44:55:66"] });
     });
   });
 });

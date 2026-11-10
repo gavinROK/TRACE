@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { AiActionClassification, AiPendingActionStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
@@ -34,8 +34,8 @@ import { redactSecretsDeep } from "../secret-redaction";
 @Injectable()
 export class ApprovalsService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly auditLog: AuditLogService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
   async create(params: {

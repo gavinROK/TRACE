@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { AiMessageRole } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 
@@ -32,7 +32,7 @@ export interface AppendMessageInput {
  */
 @Injectable()
 export class AiConversationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async start(input: StartConversationInput) {
     return this.prisma.aiConversation.create({

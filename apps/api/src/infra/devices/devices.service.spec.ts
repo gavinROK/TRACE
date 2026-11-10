@@ -16,7 +16,8 @@ describe("InfraDevicesService", () => {
   };
   const connectorRegistry = { get: jest.fn() };
   const credentialsService = { listForEnvironment: jest.fn() };
-  const service = new InfraDevicesService(prisma as never, connectorRegistry as never, credentialsService as never);
+  const auditLog = { record: jest.fn() };
+  const service = new InfraDevicesService(prisma as never, connectorRegistry as never, credentialsService as never, auditLog as never);
 
   beforeEach(() => jest.clearAllMocks());
 
@@ -96,6 +97,37 @@ describe("InfraDevicesService", () => {
 
       expect(summary.aggregateMemory).toEqual({ usedBytes: 40_000_000_000, totalBytes: 80_000_000_000, hostsReporting: 2 });
       expect(summary.aggregateStorage).toEqual({ usedBytes: 0, totalBytes: 0, hostsReporting: 0 });
+    });
+  });
+
+  describe("update", () => {
+    it("records who changed what, regardless of whether the caller was a browser session or an approved MCP action", async () => {
+      prisma.infraDevice.findFirst.mockResolvedValue({ id: "d1" });
+      prisma.infraDevice.update.mockResolvedValue({ id: "d1", name: "renamed" });
+
+      await service.update("env1", "d1", "user:u1", { name: "renamed" } as never);
+
+      expect(prisma.infraDevice.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: "d1" }, data: { name: "renamed" } }),
+      );
+      expect(auditLog.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          environmentId: "env1",
+          actor: "user:u1",
+          action: "device.update",
+          targetType: "InfraDevice",
+          targetId: "d1",
+          detail: { fields: ["name"] },
+        }),
+      );
+    });
+
+    it("throws NotFoundException for a device outside the environment and never writes or audits", async () => {
+      prisma.infraDevice.findFirst.mockResolvedValue(null);
+
+      await expect(service.update("env1", "missing", "user:u1", { name: "x" } as never)).rejects.toThrow(NotFoundException);
+      expect(prisma.infraDevice.update).not.toHaveBeenCalled();
+      expect(auditLog.record).not.toHaveBeenCalled();
     });
   });
 

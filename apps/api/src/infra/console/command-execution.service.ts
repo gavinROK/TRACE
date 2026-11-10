@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { InfraCommandStatus, InfraManagementProtocol } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
@@ -26,11 +26,11 @@ export class CommandExecutionService {
   private readonly abortControllers = new Map<string, AbortController>();
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly connectorRegistry: ConnectorRegistryService,
-    private readonly credentialsService: CredentialsService,
-    private readonly devicesService: InfraDevicesService,
-    private readonly auditLog: AuditLogService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ConnectorRegistryService) private readonly connectorRegistry: ConnectorRegistryService,
+    @Inject(CredentialsService) private readonly credentialsService: CredentialsService,
+    @Inject(InfraDevicesService) private readonly devicesService: InfraDevicesService,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
   async executeOnDevice(environmentId: string, actor: string, deviceName: string, command: string, timeoutMs = DEFAULT_TIMEOUT_MS) {

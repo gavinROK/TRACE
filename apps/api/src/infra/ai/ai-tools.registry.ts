@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { AiActionClassification } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
@@ -213,15 +213,15 @@ export interface ToolCallContext {
 @Injectable()
 export class AiToolsRegistryService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly environmentsService: EnvironmentsService,
-    private readonly devicesService: InfraDevicesService,
-    private readonly devicePollingService: DevicePollingService,
-    private readonly topologyService: TopologyService,
-    private readonly auditLogService: AuditLogService,
-    private readonly commandExecutionService: CommandExecutionService,
-    private readonly actionsService: ActionsService,
-    private readonly discoveryScanService: DiscoveryScanService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(EnvironmentsService) private readonly environmentsService: EnvironmentsService,
+    @Inject(InfraDevicesService) private readonly devicesService: InfraDevicesService,
+    @Inject(DevicePollingService) private readonly devicePollingService: DevicePollingService,
+    @Inject(TopologyService) private readonly topologyService: TopologyService,
+    @Inject(AuditLogService) private readonly auditLogService: AuditLogService,
+    @Inject(CommandExecutionService) private readonly commandExecutionService: CommandExecutionService,
+    @Inject(ActionsService) private readonly actionsService: ActionsService,
+    @Inject(DiscoveryScanService) private readonly discoveryScanService: DiscoveryScanService,
   ) {}
 
   async run(toolName: string, input: Record<string, unknown>, ctx: ToolCallContext): Promise<unknown> {
@@ -342,7 +342,7 @@ export class AiToolsRegistryService {
       for (const key of ["name", "category", "ipAddresses", "managementPort", "managementProtocols", "tags", "notes"]) {
         if (key in input) patch[key] = input[key];
       }
-      return this.devicesService.update(ctx.environmentId, deviceId, patch);
+      return this.devicesService.update(ctx.environmentId, deviceId, ctx.actor, patch);
     },
   };
 }

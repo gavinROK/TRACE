@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { AlertSeverity } from "@prisma/client";
 import { ActivityEventType } from "../../activity/activity-event-type";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -19,7 +19,7 @@ const ZERO_BASELINE_HIGH_THRESHOLD = 15;
  */
 @Injectable()
 export class UnusualCommitVolumeRule implements SecurityRule {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async evaluate(organizationId: string): Promise<SecurityFinding[]> {
     const since = new Date();

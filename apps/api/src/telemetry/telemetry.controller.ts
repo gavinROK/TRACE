@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post, Query, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, HttpCode, Inject, Post, Query, UseGuards } from "@nestjs/common";
 import { CurrentOrganizationId } from "../auth/current-organization-id.decorator";
 import { OrgApiKeyGuard } from "../auth/org-api-key.guard";
 import { GetUsageTrendQueryDto } from "./dto/get-usage-trend-query.dto";
@@ -8,7 +8,7 @@ import { TelemetryService } from "./telemetry.service";
 @Controller("telemetry")
 @UseGuards(OrgApiKeyGuard)
 export class TelemetryController {
-  constructor(private readonly telemetry: TelemetryService) {}
+  constructor(@Inject(TelemetryService) private readonly telemetry: TelemetryService) {}
 
   @Post("api-usage")
   @HttpCode(201)

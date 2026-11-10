@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { AiProviderKind } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { MasterKeyStore } from "../credentials/master-key.store";
@@ -28,9 +28,9 @@ export interface AiSettingsStatus {
 @Injectable()
 export class AiSettingsService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly masterKeyStore: MasterKeyStore,
-    private readonly anthropicProvider: AnthropicProviderService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(MasterKeyStore) private readonly masterKeyStore: MasterKeyStore,
+    @Inject(AnthropicProviderService) private readonly anthropicProvider: AnthropicProviderService,
   ) {}
 
   async getStatus(provider: AiProviderKind = AiProviderKind.ANTHROPIC): Promise<AiSettingsStatus> {

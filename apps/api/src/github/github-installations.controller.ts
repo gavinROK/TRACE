@@ -1,12 +1,4 @@
-import {
-  Body,
-  ConflictException,
-  Controller,
-  NotFoundException,
-  Param,
-  Post,
-  UseGuards,
-} from "@nestjs/common";
+import { Body, ConflictException, Controller, Inject, NotFoundException, Param, Post, UseGuards } from "@nestjs/common";
 import { CurrentOrganizationId } from "../auth/current-organization-id.decorator";
 import { OrgApiKeyGuard } from "../auth/org-api-key.guard";
 import { PrismaService } from "../prisma/prisma.service";
@@ -17,8 +9,8 @@ import { GithubSyncService } from "./github-sync.service";
 @UseGuards(OrgApiKeyGuard)
 export class GithubInstallationsController {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly githubSync: GithubSyncService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(GithubSyncService) private readonly githubSync: GithubSyncService,
   ) {}
 
   /**

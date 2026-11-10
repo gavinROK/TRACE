@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { IsOptional, IsString, Matches, MinLength } from "class-validator";
 import { InfraAuthenticatedRequest, TraceAccessGuard } from "../auth/trace-access.guard";
 import { DiscoveryScanService } from "./discovery-scan.service";
@@ -32,9 +32,9 @@ class ScanSubnetDto {
 @Controller("infra/environments/:environmentId/discovery")
 export class DiscoveryController {
   constructor(
-    private readonly networkDiscovery: NetworkDiscoveryService,
-    private readonly proxmoxDiscovery: ProxmoxDiscoveryService,
-    private readonly discoveryScan: DiscoveryScanService,
+    @Inject(NetworkDiscoveryService) private readonly networkDiscovery: NetworkDiscoveryService,
+    @Inject(ProxmoxDiscoveryService) private readonly proxmoxDiscovery: ProxmoxDiscoveryService,
+    @Inject(DiscoveryScanService) private readonly discoveryScan: DiscoveryScanService,
   ) {}
 
   @Get("local-network")

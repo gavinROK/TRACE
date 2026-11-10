@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { AddSoftwareDto } from "./dto/add-software.dto";
@@ -16,7 +16,7 @@ type DeviceWithRelations = Prisma.DeviceGetPayload<typeof WITH_RELATIONS>;
 
 @Injectable()
 export class DevicesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async enrollDevice(organizationId: string, dto: EnrollDeviceDto) {
     if (dto.ownerId) {

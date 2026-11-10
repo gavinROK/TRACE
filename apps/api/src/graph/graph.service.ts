@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { ActivityEventType } from "../activity/activity-event-type";
 import { computePostureStatus } from "../devices/device-posture";
 import { PrismaService } from "../prisma/prisma.service";
@@ -18,7 +18,7 @@ function isOpenPullRequest(metadata: unknown): boolean {
 
 @Injectable()
 export class GraphService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   /**
    * Everything here is a real database record or a count derived from

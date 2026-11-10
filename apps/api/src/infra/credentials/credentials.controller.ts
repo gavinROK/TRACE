@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, Get, Inject, Param, Post, Req, UseGuards } from "@nestjs/common";
 import { AuditLogService } from "../audit/audit-log.service";
 import { InfraAuthenticatedRequest, TraceAccessGuard } from "../auth/trace-access.guard";
 import { CredentialsService } from "./credentials.service";
@@ -12,8 +12,8 @@ import { CreateCredentialDto } from "./dto/create-credential.dto";
 @Controller("infra/environments/:environmentId/credentials")
 export class CredentialsController {
   constructor(
-    private readonly credentialsService: CredentialsService,
-    private readonly auditLog: AuditLogService,
+    @Inject(CredentialsService) private readonly credentialsService: CredentialsService,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
   @Get()

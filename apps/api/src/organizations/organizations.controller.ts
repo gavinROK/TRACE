@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from "@nestjs/common";
+import { Controller, Get, Inject, UseGuards } from "@nestjs/common";
 import { CurrentOrganizationId } from "../auth/current-organization-id.decorator";
 import { OrgApiKeyGuard } from "../auth/org-api-key.guard";
 import { OrganizationsService } from "./organizations.service";
@@ -6,7 +6,7 @@ import { OrganizationsService } from "./organizations.service";
 @Controller("organizations/me")
 @UseGuards(OrgApiKeyGuard)
 export class OrganizationsController {
-  constructor(private readonly organizations: OrganizationsService) {}
+  constructor(@Inject(OrganizationsService) private readonly organizations: OrganizationsService) {}
 
   @Get()
   getOrganization(@CurrentOrganizationId() organizationId: string) {

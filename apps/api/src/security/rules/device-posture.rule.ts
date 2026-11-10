@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { AlertSeverity } from "@prisma/client";
 import { computePostureStatus, listFailingChecks } from "../../devices/device-posture";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -17,7 +17,7 @@ import { SecurityAlertType, SecurityFinding, SecurityRule } from "../security-ru
  */
 @Injectable()
 export class DevicePostureRule implements SecurityRule {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async evaluate(organizationId: string): Promise<SecurityFinding[]> {
     const devices = await this.prisma.device.findMany({

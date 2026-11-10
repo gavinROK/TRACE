@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { AlertSeverity } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { SecurityAlertType, SecurityFinding, SecurityRule } from "../security-rule";
@@ -18,7 +18,7 @@ const ZERO_BASELINE_HIGH_THRESHOLD = 100;
  */
 @Injectable()
 export class ApiUsageSpikeRule implements SecurityRule {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async evaluate(organizationId: string): Promise<SecurityFinding[]> {
     const since = new Date();

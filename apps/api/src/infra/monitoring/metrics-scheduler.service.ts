@@ -1,4 +1,4 @@
-import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
+import { Inject, Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import { Interval } from "@nestjs/schedule";
 import { PrismaService } from "../../prisma/prisma.service";
 import { DevicePollingService } from "./device-polling.service";
@@ -20,8 +20,8 @@ export class MetricsSchedulerService implements OnModuleInit {
   private polling = false;
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly devicePolling: DevicePollingService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(DevicePollingService) private readonly devicePolling: DevicePollingService,
   ) {}
 
   onModuleInit(): void {

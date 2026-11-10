@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from "@nestjs/common";
+import { Body, Controller, Get, Inject, Param, Post, UseGuards } from "@nestjs/common";
 import { CurrentOrganizationId } from "../auth/current-organization-id.decorator";
 import { OrgApiKeyGuard } from "../auth/org-api-key.guard";
 import { DevicesService } from "./devices.service";
@@ -8,7 +8,7 @@ import { EnrollDeviceDto } from "./dto/enroll-device.dto";
 @Controller("devices")
 @UseGuards(OrgApiKeyGuard)
 export class DevicesController {
-  constructor(private readonly devices: DevicesService) {}
+  constructor(@Inject(DevicesService) private readonly devices: DevicesService) {}
 
   @Get()
   list(@CurrentOrganizationId() organizationId: string) {

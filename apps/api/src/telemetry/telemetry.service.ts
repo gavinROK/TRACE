@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { ActorType } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { ReportApiUsageDto } from "./dto/report-api-usage.dto";
@@ -22,7 +22,7 @@ const DEFAULT_TREND_DAYS = 14;
 
 @Injectable()
 export class TelemetryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async recordApiUsage(organizationId: string, dto: ReportApiUsageDto) {
     if (dto.developerId) {

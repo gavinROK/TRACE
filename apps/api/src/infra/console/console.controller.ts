@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Get, Inject, Param, Post, Query, Req, UseGuards } from "@nestjs/common";
 import { AiActionClassification } from "@prisma/client";
 import { InfraAuthenticatedRequest, TraceAccessGuard } from "../auth/trace-access.guard";
 import { ApprovalsService } from "../approvals/approvals.service";
@@ -10,8 +10,8 @@ import { ExecCommandDto, ExecGroupCommandDto } from "./dto/exec-command.dto";
 @Controller("infra/environments/:environmentId/console")
 export class ConsoleController {
   constructor(
-    private readonly commandExecution: CommandExecutionService,
-    private readonly approvals: ApprovalsService,
+    @Inject(CommandExecutionService) private readonly commandExecution: CommandExecutionService,
+    @Inject(ApprovalsService) private readonly approvals: ApprovalsService,
   ) {}
 
   /**

@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { AlertSeverity } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { SecurityAlertType, SecurityFinding, SecurityRule } from "../security-rule";
@@ -15,7 +15,7 @@ const HIGH_ERROR_RATE = 0.5;
  */
 @Injectable()
 export class ElevatedApiErrorRateRule implements SecurityRule {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async evaluate(organizationId: string): Promise<SecurityFinding[]> {
     const since = new Date();

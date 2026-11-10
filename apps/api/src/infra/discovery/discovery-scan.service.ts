@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from "@nestjs/common";
+import { BadRequestException, Inject, Injectable } from "@nestjs/common";
 import { InfraDeviceCategory } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
@@ -43,10 +43,10 @@ export interface NetworkScanResult extends DetectedLocalNetwork {
 @Injectable()
 export class DiscoveryScanService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly networkDiscovery: NetworkDiscoveryService,
-    private readonly devicesService: InfraDevicesService,
-    private readonly auditLog: AuditLogService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(NetworkDiscoveryService) private readonly networkDiscovery: NetworkDiscoveryService,
+    @Inject(InfraDevicesService) private readonly devicesService: InfraDevicesService,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
   async detectLocalNetwork(): Promise<DetectedLocalNetwork> {
@@ -146,7 +146,7 @@ export class DiscoveryScanService {
       const macAddresses = dto.mac && !existing.macAddresses.includes(dto.mac)
         ? [...existing.macAddresses, dto.mac]
         : existing.macAddresses;
-      const updated = await this.devicesService.update(environmentId, existing.id, { macAddresses });
+      const updated = await this.devicesService.update(environmentId, existing.id, actor, { macAddresses });
       await this.auditLog.record({
         environmentId,
         actor,

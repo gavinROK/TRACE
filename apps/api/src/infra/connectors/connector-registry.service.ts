@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { InfraManagementProtocol } from "@prisma/client";
 import { ProxmoxConnector } from "./proxmox/proxmox-connector";
 import { SnmpConnector } from "./snmp/snmp-connector";
@@ -13,7 +13,7 @@ import type { InfraConnector } from "./connector.types";
 export class ConnectorRegistryService {
   private readonly connectors: Map<InfraManagementProtocol, InfraConnector>;
 
-  constructor(ssh: SshConnector, proxmox: ProxmoxConnector, snmp: SnmpConnector) {
+  constructor(@Inject(SshConnector) ssh: SshConnector, @Inject(ProxmoxConnector) proxmox: ProxmoxConnector, @Inject(SnmpConnector) snmp: SnmpConnector) {
     this.connectors = new Map<InfraManagementProtocol, InfraConnector>([
       [InfraManagementProtocol.SSH, ssh],
       [InfraManagementProtocol.PROXMOX_API, proxmox],

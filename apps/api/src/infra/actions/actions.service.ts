@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
 import { ConnectorRegistryService } from "../connectors/connector-registry.service";
@@ -17,10 +17,10 @@ export const DESTRUCTIVE_ACTIONS = new Set(["stop", "shutdown", "reboot"]);
 @Injectable()
 export class ActionsService {
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly connectorRegistry: ConnectorRegistryService,
-    private readonly credentialsService: CredentialsService,
-    private readonly auditLog: AuditLogService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ConnectorRegistryService) private readonly connectorRegistry: ConnectorRegistryService,
+    @Inject(CredentialsService) private readonly credentialsService: CredentialsService,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
   async performAction(

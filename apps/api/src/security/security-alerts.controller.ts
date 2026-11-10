@@ -1,14 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  NotFoundException,
-  Param,
-  Patch,
-  Post,
-  Query,
-  UseGuards,
-} from "@nestjs/common";
+import { Body, Controller, Get, Inject, NotFoundException, Param, Patch, Post, Query, UseGuards } from "@nestjs/common";
 import { AlertStatus } from "@prisma/client";
 import { CurrentOrganizationId } from "../auth/current-organization-id.decorator";
 import { OrgApiKeyGuard } from "../auth/org-api-key.guard";
@@ -20,8 +10,8 @@ import { SecurityDetectionService } from "./security-detection.service";
 @UseGuards(OrgApiKeyGuard)
 export class SecurityAlertsController {
   constructor(
-    private readonly detection: SecurityDetectionService,
-    private readonly prisma: PrismaService,
+    @Inject(SecurityDetectionService) private readonly detection: SecurityDetectionService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
   ) {}
 
   @Get()

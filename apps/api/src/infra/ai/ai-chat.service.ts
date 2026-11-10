@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Inject, Injectable, Logger } from "@nestjs/common";
 import { AiActionClassification, AiMessageRole, AiProviderKind } from "@prisma/client";
 import { ApprovalsService } from "../approvals/approvals.service";
 import { AiConversationsService } from "./ai-conversations.service";
@@ -43,11 +43,11 @@ export class AiChatService {
   private readonly logger = new Logger(AiChatService.name);
 
   constructor(
-    private readonly settings: AiSettingsService,
-    private readonly provider: AnthropicProviderService,
-    private readonly conversations: AiConversationsService,
-    private readonly tools: AiToolsRegistryService,
-    private readonly approvals: ApprovalsService,
+    @Inject(AiSettingsService) private readonly settings: AiSettingsService,
+    @Inject(AnthropicProviderService) private readonly provider: AnthropicProviderService,
+    @Inject(AiConversationsService) private readonly conversations: AiConversationsService,
+    @Inject(AiToolsRegistryService) private readonly tools: AiToolsRegistryService,
+    @Inject(ApprovalsService) private readonly approvals: ApprovalsService,
   ) {}
 
   async *sendMessage(params: SendMessageParams): AsyncGenerator<AiChatStreamEvent> {

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { ConflictException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { ConflictException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../../prisma/prisma.service";
 
@@ -19,7 +19,7 @@ export interface IssuedSession {
  */
 @Injectable()
 export class TraceAuthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async hasAnyUser(): Promise<boolean> {
     const count = await this.prisma.traceUser.count();

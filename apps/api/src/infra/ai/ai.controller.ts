@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Req, Res, UseGuards } from "@nestjs/common";
+import { Body, Controller, Delete, ForbiddenException, Get, Inject, Param, Patch, Post, Req, Res, UseGuards } from "@nestjs/common";
 import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
 import { AiProviderKind } from "@prisma/client";
 import type { Response } from "express";
@@ -21,10 +21,10 @@ import { RenameConversationDto, SaveApiKeyDto, SendMessageDto, SetModelDto, Star
 @Controller("infra")
 export class AiController {
   constructor(
-    private readonly settings: AiSettingsService,
-    private readonly chat: AiChatService,
-    private readonly conversations: AiConversationsService,
-    private readonly approvals: ApprovalsService,
+    @Inject(AiSettingsService) private readonly settings: AiSettingsService,
+    @Inject(AiChatService) private readonly chat: AiChatService,
+    @Inject(AiConversationsService) private readonly conversations: AiConversationsService,
+    @Inject(ApprovalsService) private readonly approvals: ApprovalsService,
   ) {}
 
   @Get("ai/settings")

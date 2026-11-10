@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from "@nestjs/common";
+import { Inject, Injectable, Logger, NotFoundException } from "@nestjs/common";
 import { InfraManagementProtocol, InfraOnlineState } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
@@ -28,10 +28,10 @@ export class DevicePollingService {
   private readonly logger = new Logger(DevicePollingService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
-    private readonly connectorRegistry: ConnectorRegistryService,
-    private readonly credentialsService: CredentialsService,
-    private readonly auditLog: AuditLogService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(ConnectorRegistryService) private readonly connectorRegistry: ConnectorRegistryService,
+    @Inject(CredentialsService) private readonly credentialsService: CredentialsService,
+    @Inject(AuditLogService) private readonly auditLog: AuditLogService,
   ) {}
 
   async pollDevice(environmentId: string, deviceId: string): Promise<PollResult> {

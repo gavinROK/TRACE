@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Query, UseGuards } from "@nestjs/common";
+import { Controller, Get, Inject, Param, Query, UseGuards } from "@nestjs/common";
 import { InfraMetricKind } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { TraceAccessGuard } from "../auth/trace-access.guard";
@@ -6,7 +6,7 @@ import { TraceAccessGuard } from "../auth/trace-access.guard";
 @UseGuards(TraceAccessGuard)
 @Controller("infra/environments/:environmentId/devices/:deviceId/metrics")
 export class MetricsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   @Get()
   async history(

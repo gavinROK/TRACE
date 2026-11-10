@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
+import { CanActivate, ExecutionContext, ForbiddenException, Inject, Injectable, UnauthorizedException } from "@nestjs/common";
 import type { Request } from "express";
 import { parseCookieHeader } from "./cookie.util";
 import { MCP_ACTOR } from "./mcp-actor";
@@ -35,7 +35,7 @@ export interface InfraAuthenticatedRequest extends Request {
  */
 @Injectable()
 export class TraceAccessGuard implements CanActivate {
-  constructor(private readonly authService: TraceAuthService) {}
+  constructor(@Inject(TraceAuthService) private readonly authService: TraceAuthService) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<InfraAuthenticatedRequest>();
