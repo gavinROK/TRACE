@@ -216,7 +216,7 @@ can be removed independently without the other noticing.
 ### MCP integration (TRACE v0.4)
 
 `packages/mcp-server` is a thin MCP server (stdio transport only — no
-HTTP/SSE listener, so no new network attack surface) exposing 20 tools
+HTTP/SSE listener, so no new network attack surface) exposing 22 tools
 to any MCP client; see that package's own README for the full list and
 setup (Claude Code and Claude Desktop both use the identical
 command/args/env shape). It authenticates to TRACE's API with a fixed
@@ -274,6 +274,55 @@ endpoints are completely unaffected — the check is purely on `req.actor`.
   approve/reject endpoints the chat panel uses. This is the one place
   a human sees and decides an MCP-proposed action, which — unlike a
   chat message — has no conversation to render an inline card inside.
+
+### Temporary credential enrollment (TRACE v0.5)
+
+Enrolling a credential always required opening the device panel and
+filling in the manual "+ Add credential" form yourself — that still
+works unchanged. v0.5 adds a second path for when an MCP client
+(Claude) notices a credential is missing and wants to help, **without
+ever receiving, transmitting, or storing the secret itself**:
+
+1. Off by default. `CredentialEnrollmentController.propose` (and,
+   independently, `CredentialEnrollmentService.authorizeSession` as
+   defense in depth) refuses outright unless an operator has set
+   `TRACE_CREDENTIAL_ENROLLMENT_ENABLED=true`. Disabled means disabled:
+   not even an `AiPendingAction` row is created.
+2. The MCP tool `trace_request_credential_enrollment` (protocol + an
+   optional label — no secret field exists in its schema) hits that
+   controller, which creates an `AiPendingAction` exactly like
+   `update_device`/`execute_command` do — same classification
+   (ADMINISTRATIVE), same queue, same `isMcpActor` gate.
+3. A human approves it from TRACE's own dashboard — the existing
+   approval endpoint, the existing structural guarantee that no AI
+   surface can approve its own action (see "MCP integration" above).
+   That approval is what calls `AiToolsRegistryService`'s
+   `request_credential_enrollment` handler, which is the *only* place
+   a `CredentialEnrollmentSession` row is created and the only place
+   its 5-minute clock (`CREDENTIAL_ENROLLMENT_WINDOW_MS`) starts.
+4. The human types the credential directly into TRACE's device panel
+   (`EnrollmentSessionPanel` in `DeviceRightPanel.tsx`), which reuses
+   the exact same `CredentialForm` the manual flow already has, with
+   its protocol locked to whatever was approved. Submitting calls
+   `CredentialEnrollmentController.complete` — refused outright for
+   the MCP actor — which calls the exact same `CredentialsService.create`
+   (AES-256-GCM, `MasterKeyStore`) the manual form already uses. No
+   second cipher, no second key store, no separate credential table.
+5. `complete`/`cancel`/expiry are all terminal: a session can be
+   consumed exactly once. `requireUsable` is the single choke point
+   every state-changing call goes through, so replay (completing an
+   already-COMPLETED/EXPIRED/REVOKED session) is rejected there, not
+   left to the caller to avoid.
+6. `trace_get_credential_enrollment_status` (and the dashboard's own
+   poll of `GET .../credential-enrollment-sessions/active`) is the
+   read side — safe to call freely, same as `trace_get_health`,
+   because the `CredentialEnrollmentSession` row has no field capable
+   of holding a secret in the first place. This is also how Claude
+   knows when to stop waiting and run `trace_get_health` to verify the
+   new credential actually works.
+
+See `apps/api/src/infra/credentials/credential-enrollment.service.ts`
+and its spec for the full state machine.
 
 ## Security model
 

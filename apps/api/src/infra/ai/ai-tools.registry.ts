@@ -1,9 +1,10 @@
 import { BadRequestException, Inject, Injectable } from "@nestjs/common";
-import { AiActionClassification } from "@prisma/client";
+import { AiActionClassification, InfraManagementProtocol } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
 import { AuditLogService } from "../audit/audit-log.service";
 import { ActionsService, DESTRUCTIVE_ACTIONS } from "../actions/actions.service";
 import { CommandExecutionService } from "../console/command-execution.service";
+import { CredentialEnrollmentService } from "../credentials/credential-enrollment.service";
 import { InfraDevicesService } from "../devices/devices.service";
 import { DiscoveryScanService } from "../discovery/discovery-scan.service";
 import { EnvironmentsService } from "../environments/environments.service";
@@ -52,6 +53,7 @@ export const AI_ACTION_CLASSIFICATION: Record<string, AiActionClassification> = 
   execute_command: AiActionClassification.ADMINISTRATIVE,
   execute_group_command: AiActionClassification.ADMINISTRATIVE,
   update_device: AiActionClassification.ADMINISTRATIVE,
+  request_credential_enrollment: AiActionClassification.ADMINISTRATIVE,
   // perform_action is classified dynamically — see classifyPerformAction.
 };
 
@@ -194,6 +196,20 @@ export const AI_TOOL_DEFINITIONS: AiToolDefinition[] = [
       required: ["deviceId"],
     },
   },
+  {
+    name: "request_credential_enrollment",
+    description:
+      "Request a temporary, 5-minute window for a human to enroll a credential (SSH username/password/key, Proxmox API token, SNMPv3 keys, ...) for one device, without the secret ever passing through this conversation. Disabled by default — fails with a clear message if TRACE_CREDENTIAL_ENROLLMENT_ENABLED is not set. ADMINISTRATIVE — requires explicit user approval; approving it is what starts the 5-minute window, and the human then types the credential directly into TRACE's device panel, never here. Poll trace_get_credential_enrollment_status (or get_device) to find out when they've finished, then test with check_device_health.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        deviceId: { type: "string" },
+        protocol: { type: "string", description: "e.g. SSH, PROXMOX_API, SNMP_V3" },
+        label: { type: "string", description: "Optional display label for the credential, e.g. \"router-ssh\"." },
+      },
+      required: ["deviceId", "protocol"],
+    },
+  },
 ];
 
 export interface ToolCallContext {
@@ -222,6 +238,7 @@ export class AiToolsRegistryService {
     @Inject(CommandExecutionService) private readonly commandExecutionService: CommandExecutionService,
     @Inject(ActionsService) private readonly actionsService: ActionsService,
     @Inject(DiscoveryScanService) private readonly discoveryScanService: DiscoveryScanService,
+    @Inject(CredentialEnrollmentService) private readonly credentialEnrollmentService: CredentialEnrollmentService,
   ) {}
 
   async run(toolName: string, input: Record<string, unknown>, ctx: ToolCallContext): Promise<unknown> {
@@ -343,6 +360,28 @@ export class AiToolsRegistryService {
         if (key in input) patch[key] = input[key];
       }
       return this.devicesService.update(ctx.environmentId, deviceId, ctx.actor, patch);
+    },
+
+    // Runs once a human approves the proposing pending action (see
+    // credentials/credential-enrollment.controller.ts `propose`) —
+    // `ctx.actor` at this point is that approver's own browser-session
+    // actor string (resolveApproval in ai-chat.service.ts passes
+    // `decidedBy`), never the MCP actor, which is what lets
+    // authorizeSession treat it as the human's own authorization.
+    request_credential_enrollment: async (input, ctx) => {
+      const deviceId = requireString(input, "deviceId");
+      const protocolInput = requireString(input, "protocol");
+      if (!Object.values(InfraManagementProtocol).includes(protocolInput as InfraManagementProtocol)) {
+        throw new BadRequestException(`"protocol" must be one of ${Object.values(InfraManagementProtocol).join(", ")}`);
+      }
+      const label = typeof input.label === "string" ? input.label : undefined;
+      return this.credentialEnrollmentService.authorizeSession(
+        ctx.environmentId,
+        deviceId,
+        protocolInput as InfraManagementProtocol,
+        label,
+        ctx.actor,
+      );
     },
   };
 }

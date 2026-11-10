@@ -149,4 +149,26 @@ export class TraceClient {
       body: JSON.stringify({ name, params }),
     });
   }
+
+  /** TRACE v0.5: proposes a temporary (max 5 minute) credential-
+   * enrollment window for one device — this call never carries, and
+   * the API never accepts from it, an actual secret. Like
+   * executeCommand/performAction, this only creates a pending action;
+   * a human approving it in TRACE's dashboard is what opens the window
+   * and lets them type the credential directly into TRACE's own UI. */
+  requestCredentialEnrollment(environmentId: string, deviceId: string, protocol: string, label?: string) {
+    return this.request<unknown>(`/infra/environments/${environmentId}/devices/${deviceId}/credential-enrollment-sessions`, {
+      method: "POST",
+      body: JSON.stringify({ protocol, label }),
+    });
+  }
+
+  /** Read-only — reports whether a human has approved/completed/
+   * cancelled/let-expire the most recent enrollment window for this
+   * device. Never returns a secret: the underlying row has no field
+   * capable of carrying one (see apps/api's credential-enrollment
+   * module). Safe to call freely, same as checkHealth. */
+  getCredentialEnrollmentStatus(environmentId: string, deviceId: string) {
+    return this.request<unknown>(`/infra/environments/${environmentId}/devices/${deviceId}/credential-enrollment-sessions/active`);
+  }
 }

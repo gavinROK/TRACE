@@ -41,8 +41,10 @@ billing.
 | `trace_scan_network` | Scan a subnet for devices (ARP + optional nmap ping sweep, no port scanning). | read-only |
 | `trace_update_device` | Update a device's non-secret settings (name, IPs, port, protocols, tags, notes) — never accepts a credential. | **approval required** |
 | `trace_run_diagnostic` | Read-only inspection on a device: OS info, CPU/memory/disk, network interfaces, service status, system logs, process list, package inventory, firewall rules, filesystem info, or a structured security-posture assessment. SSH hosts today. | read-only |
+| `trace_request_credential_enrollment` | **Propose** a temporary 5-minute window for a human to enroll a credential — the secret never passes through this tool, this client, or TRACE's API in either direction. Disabled unless `TRACE_CREDENTIAL_ENROLLMENT_ENABLED=true`. | **approval required** |
+| `trace_get_credential_enrollment_status` | Check the status of the most recent enrollment window for a device (authorized/completed/expired/revoked). Never returns a secret. | read-only |
 
-**The four "approval required" tools never execute anything directly.**
+**The five "approval required" tools never execute anything directly.**
 Calling one creates an `AiPendingAction` row and returns
 `{ pending: true, pendingActionId, classification, message }` instead of
 a result — a human must approve it from TRACE's own web UI (Settings →

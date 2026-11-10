@@ -39,6 +39,7 @@ describe("AiToolsRegistryService", () => {
   const commandExecutionService = { executeOnDevice: jest.fn(), executeOnGroup: jest.fn() };
   const actionsService = { performAction: jest.fn() };
   const discoveryScanService = { detectLocalNetwork: jest.fn(), scanSubnet: jest.fn() };
+  const credentialEnrollmentService = { authorizeSession: jest.fn() };
 
   const registry = new AiToolsRegistryService(
     prisma as never,
@@ -50,6 +51,7 @@ describe("AiToolsRegistryService", () => {
     commandExecutionService as never,
     actionsService as never,
     discoveryScanService as never,
+    credentialEnrollmentService as never,
   );
 
   beforeEach(() => jest.clearAllMocks());
@@ -96,6 +98,23 @@ describe("AiToolsRegistryService", () => {
     actionsService.performAction.mockResolvedValue({ success: true });
     await registry.run("perform_action", { deviceId: "d1", action: "stop" }, { environmentId: "env1", actor: "user:u1" });
     expect(actionsService.performAction).toHaveBeenCalledWith("env1", "user:u1", "d1", "stop", undefined, true);
+  });
+
+  it("request_credential_enrollment forwards the approver's own actor as authorizedBy — never the MCP actor", async () => {
+    credentialEnrollmentService.authorizeSession.mockResolvedValue({ id: "ces1", status: "AUTHORIZED" });
+    await registry.run(
+      "request_credential_enrollment",
+      { deviceId: "d1", protocol: "SSH", label: "router-ssh" },
+      { environmentId: "env1", actor: "user:u1" },
+    );
+    expect(credentialEnrollmentService.authorizeSession).toHaveBeenCalledWith("env1", "d1", "SSH", "router-ssh", "user:u1");
+  });
+
+  it("request_credential_enrollment rejects an unrecognized protocol before ever reaching the service", async () => {
+    await expect(
+      registry.run("request_credential_enrollment", { deviceId: "d1", protocol: "TELNET" }, { environmentId: "env1", actor: "user:u1" }),
+    ).rejects.toThrow(BadRequestException);
+    expect(credentialEnrollmentService.authorizeSession).not.toHaveBeenCalled();
   });
 
   it("throws BadRequestException for an unknown tool name", async () => {

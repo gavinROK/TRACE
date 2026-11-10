@@ -74,6 +74,27 @@ export interface InfraCredentialSummary {
   updatedAt: string;
 }
 
+export type CredentialEnrollmentStatus = "AUTHORIZED" | "COMPLETED" | "EXPIRED" | "REVOKED";
+
+/** TRACE v0.5: the status of a temporary credential-enrollment window
+ * an external MCP client (Claude) requested — never carries a secret,
+ * because the underlying row has no field capable of holding one. See
+ * apps/api's credential-enrollment module. */
+export interface CredentialEnrollmentSessionSummary {
+  id: string;
+  environmentId: string;
+  deviceId: string;
+  protocol: InfraManagementProtocol;
+  label: string | null;
+  status: CredentialEnrollmentStatus;
+  requestedBy: string;
+  createdAt: string;
+  expiresAt: string;
+  completedAt: string | null;
+  credentialId: string | null;
+  secondsRemaining: number;
+}
+
 export interface InfraDeviceDetail extends InfraDeviceSummary {
   notes: string | null;
   recentMetrics: InfraMetricSample[];

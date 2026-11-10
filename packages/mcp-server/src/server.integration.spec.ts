@@ -28,7 +28,7 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
     return client;
   }
 
-  it("lists all registered tools — tool discovery, matching PRODUCT_SPEC.md section 11 plus TRACE v0.4's additions", async () => {
+  it("lists all registered tools — tool discovery, matching PRODUCT_SPEC.md section 11 plus TRACE v0.4/v0.5's additions", async () => {
     const client = await connectedClient();
 
     const { tools } = await client.listTools();
@@ -38,6 +38,7 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
         "trace_execute_command",
         "trace_execute_group_command",
         "trace_get_capabilities",
+        "trace_get_credential_enrollment_status",
         "trace_get_device",
         "trace_get_health",
         "trace_get_logs",
@@ -54,6 +55,7 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
         "trace_diagnose_device",
         "trace_detect_local_network",
         "trace_scan_network",
+        "trace_request_credential_enrollment",
         "trace_update_device",
         "trace_run_diagnostic",
       ].sort(),
@@ -163,6 +165,55 @@ describe("TRACE MCP server (end-to-end over the real MCP protocol)", () => {
       expect(fetchMock).toHaveBeenCalledWith("http://localhost:4000/infra/environments/env1/ai/pending-actions/pa1", expect.anything());
       const text = (result.content as Array<{ type: string; text: string }>)[0].text;
       expect(JSON.parse(text).status).toBe("APPROVED");
+    });
+  });
+
+  describe("TRACE v0.5 — temporary credential enrollment never carries a secret through this server", () => {
+    it("trace_request_credential_enrollment sends only protocol/label — the arguments schema has no payload field at all", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ pending: true, pendingActionId: "pa3", classification: "ADMINISTRATIVE", message: "Requires human approval." }),
+      });
+      const client = await connectedClient();
+
+      const result = await client.callTool({
+        name: "trace_request_credential_enrollment",
+        arguments: { environmentId: "env1", deviceId: "d1", protocol: "SSH", label: "router-ssh" },
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:4000/infra/environments/env1/devices/d1/credential-enrollment-sessions",
+        expect.objectContaining({ method: "POST", body: JSON.stringify({ protocol: "SSH", label: "router-ssh" }) }),
+      );
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      const parsed = JSON.parse(text);
+      expect(parsed.pending).toBe(true);
+      expect(parsed.pendingActionId).toBe("pa3");
+    });
+
+    it("trace_get_credential_enrollment_status is read-only and reports a countdown, never a secret", async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => ({ id: "ces1", deviceId: "d1", protocol: "SSH", status: "AUTHORIZED", secondsRemaining: 212 }),
+      });
+      const client = await connectedClient();
+
+      const result = await client.callTool({
+        name: "trace_get_credential_enrollment_status",
+        arguments: { environmentId: "env1", deviceId: "d1" },
+      });
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "http://localhost:4000/infra/environments/env1/devices/d1/credential-enrollment-sessions/active",
+        expect.anything(),
+      );
+      const text = (result.content as Array<{ type: string; text: string }>)[0].text;
+      const parsed = JSON.parse(text);
+      expect(parsed.status).toBe("AUTHORIZED");
+      expect(parsed.secondsRemaining).toBe(212);
+      expect(text).not.toMatch(/password|secret|privateKey/i);
     });
   });
 

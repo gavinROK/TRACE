@@ -366,6 +366,7 @@ model InfraEnvironment {
   auditEntries InfraAuditLogEntry[]
   relationships InfraRelationship[]
   aiConversations AiConversation[]
+  credentialEnrollmentSessions CredentialEnrollmentSession[]
 
   @@map("infra_environments")
 }
@@ -465,6 +466,7 @@ model InfraDevice {
   commandRuns      InfraCommandRun[]
   relationshipsFrom InfraRelationship[] @relation("InfraRelationshipFrom")
   relationshipsTo   InfraRelationship[] @relation("InfraRelationshipTo")
+  credentialEnrollmentSessions CredentialEnrollmentSession[]
 
   @@unique([environmentId, name])
   @@index([environmentId])
@@ -525,9 +527,69 @@ model InfraCredential {
   createdAt        DateTime                 @default(now())
   updatedAt        DateTime                 @updatedAt
 
+  enrollmentSession CredentialEnrollmentSession?
+
   @@index([environmentId])
   @@index([deviceId])
   @@map("infra_credentials")
+}
+
+enum CredentialEnrollmentStatus {
+  /// A human approved the proposing MCP tool call and has up to
+  /// `expiresAt` to type a credential into TRACE's own UI.
+  AUTHORIZED
+  /// A credential was written via `complete()` — see credentialId.
+  /// Terminal; the session can never be reused after this.
+  COMPLETED
+  /// `expiresAt` passed with nothing submitted. Terminal.
+  EXPIRED
+  /// The human cancelled it, or a newer session for the same device
+  /// superseded it. Terminal.
+  REVOKED
+}
+
+/// TRACE v0.5: a short-lived, single-use window that lets an external
+/// MCP client (Claude) *request* a credential be enrolled without ever
+/// seeing the secret itself. The secret is never part of this row and
+/// never part of the AiPendingAction this session is created from (see
+/// credential-enrollment.service.ts `authorizeSession` and
+/// AiToolsRegistryService's `request_credential_enrollment` handler) —
+/// it is typed directly into TRACE's own dashboard by the human who
+/// approved the request, through the same CredentialsService.create()
+/// (and therefore the same AES-256-GCM/MasterKeyStore encryption) the
+/// manual "+ Add credential" form already uses. This model only ever
+/// carries metadata: protocol, an operator-chosen label, and timing.
+model CredentialEnrollmentSession {
+  id            String                      @id @default(cuid())
+  environment   InfraEnvironment            @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+  environmentId String
+  device        InfraDevice                 @relation(fields: [deviceId], references: [id], onDelete: Cascade)
+  deviceId      String
+  protocol      InfraManagementProtocol
+  /// Operator-chosen label carried from the MCP proposal, purely for
+  /// display — the same free-text label the manual credential form
+  /// takes, not used for authorization.
+  label         String?
+  status        CredentialEnrollmentStatus  @default(AUTHORIZED)
+  /// The browser-session actor ("user:<id>") who approved the
+  /// proposing pending action — i.e. who authorized this window to
+  /// open. Never the MCP service-token actor; see
+  /// ApprovalsService.decide's refusal of a claude-mcp decider, which
+  /// this inherits transitively since authorizeSession is only ever
+  /// called with the approver's own actor string.
+  requestedBy   String
+  createdAt     DateTime                    @default(now())
+  /// Always createdAt + 5 minutes — see FIVE_MINUTES_MS in
+  /// credential-enrollment.service.ts. Not configurable per-call: the
+  /// 5-minute ceiling is a product requirement, not a tool parameter.
+  expiresAt     DateTime
+  completedAt   DateTime?
+  credential    InfraCredential?            @relation(fields: [credentialId], references: [id], onDelete: SetNull)
+  credentialId  String?                     @unique
+
+  @@index([environmentId, deviceId])
+  @@index([deviceId, status])
+  @@map("credential_enrollment_sessions")
 }
 
 enum InfraMetricKind {

@@ -8,6 +8,7 @@
  * `credentials: "include"`.
  */
 import type {
+  CredentialEnrollmentSessionSummary,
   InfraCommandRun,
   InfraCredentialSummary,
   InfraDashboardSummary,
@@ -138,6 +139,27 @@ export const infraApi = {
         }),
       },
     ),
+
+  /** TRACE v0.5: the status of the current/most recent temporary
+   * credential-enrollment window Claude requested for this device —
+   * never includes a secret. Null if none has ever been requested. */
+  getActiveCredentialEnrollmentSession: (environmentId: string, deviceId: string) =>
+    infraFetch<CredentialEnrollmentSessionSummary | null>(
+      `/infra/environments/${environmentId}/devices/${deviceId}/credential-enrollment-sessions/active`,
+    ),
+  /** The only call that actually supplies a secret — submitted straight
+   * from this browser session to TRACE's own API, never through
+   * Claude or MCP. Server-side, this is also the only route that can
+   * ever turn a session into a real InfraCredential. */
+  completeCredentialEnrollmentSession: (environmentId: string, sessionId: string, dto: { label: string; payload: Record<string, unknown> }) =>
+    infraFetch<InfraCredentialSummary>(`/infra/environments/${environmentId}/credential-enrollment-sessions/${sessionId}/complete`, {
+      method: "POST",
+      body: JSON.stringify(dto),
+    }),
+  cancelCredentialEnrollmentSession: (environmentId: string, sessionId: string) =>
+    infraFetch<{ ok: true }>(`/infra/environments/${environmentId}/credential-enrollment-sessions/${sessionId}/cancel`, {
+      method: "POST",
+    }),
 
   listAuditLog: (environmentId: string, limit?: number) =>
     infraFetch<Array<{ id: string; actor: string; action: string; outcome: string; createdAt: string; detail: unknown }>>(

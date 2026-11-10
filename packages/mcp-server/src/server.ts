@@ -294,6 +294,31 @@ export function createServer(client: TraceClient): McpServer {
   );
 
   registerTool(
+    "trace_request_credential_enrollment",
+    "Request a temporary, 5-minute window for a human to enroll a credential (SSH username/password/key, Proxmox API token, SNMPv3 keys, ...) for one device — the secret itself never passes through this tool call, this conversation, or TRACE's API in either direction. Disabled by default: fails with a clear message unless an operator has set TRACE_CREDENTIAL_ENROLLMENT_ENABLED=true. This never executes immediately — it creates a pending action a human must approve in TRACE's dashboard (Settings → Pending approvals); approving it is what opens the window, during which the human types the credential directly into the device's panel in TRACE's own UI, never here. Poll trace_get_credential_enrollment_status to see when they've finished, then call trace_get_health to verify the new credential actually works.",
+    {
+      environmentId: z.string(),
+      deviceId: z.string(),
+      protocol: z.string().describe("e.g. SSH, PROXMOX_API, SNMP_V3"),
+      label: z.string().optional().describe('Optional display label for the credential, e.g. "router-ssh".'),
+    },
+    async ({ environmentId, deviceId, protocol, label }) =>
+      jsonResult(
+        await guarded(() =>
+          client.requestCredentialEnrollment(environmentId as string, deviceId as string, protocol as string, label as string | undefined),
+        ),
+      ),
+  );
+
+  registerTool(
+    "trace_get_credential_enrollment_status",
+    "Check the status of the most recent credential-enrollment window for one device (AUTHORIZED and counting down, COMPLETED, EXPIRED, or REVOKED) — from trace_request_credential_enrollment. Read-only and never returns a secret; safe to call freely, same as trace_get_health. Returns null if none has ever been requested for this device.",
+    { environmentId: z.string(), deviceId: z.string() },
+    async ({ environmentId, deviceId }) =>
+      jsonResult(await guarded(() => client.getCredentialEnrollmentStatus(environmentId as string, deviceId as string))),
+  );
+
+  registerTool(
     "trace_list_alerts",
     "List active alerts. Honest about a real gap: TRACE's infrastructure control plane has no threshold-based alerting/notification engine yet — this reports that limitation plainly, plus the closest available signals (devices currently OFFLINE and the recent audit log), instead of inventing alerts that don't exist.",
     { environmentId: z.string() },

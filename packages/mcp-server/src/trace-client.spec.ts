@@ -46,4 +46,27 @@ describe("TraceClient", () => {
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer secret-token" }) }),
     );
   });
+
+  it("requestCredentialEnrollment posts only protocol/label — never a secret field", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ pending: true, pendingActionId: "pa1" }) });
+
+    await client.requestCredentialEnrollment("env1", "d1", "SSH", "router-ssh");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/infra/environments/env1/devices/d1/credential-enrollment-sessions",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ protocol: "SSH", label: "router-ssh" }) }),
+    );
+  });
+
+  it("getCredentialEnrollmentStatus reads the active-session endpoint — no body, no secret", async () => {
+    fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ status: "AUTHORIZED", secondsRemaining: 240 }) });
+
+    const result = await client.getCredentialEnrollmentStatus("env1", "d1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:4000/infra/environments/env1/devices/d1/credential-enrollment-sessions/active",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer secret-token" }) }),
+    );
+    expect(result).toEqual({ status: "AUTHORIZED", secondsRemaining: 240 });
+  });
 });

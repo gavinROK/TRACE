@@ -201,7 +201,7 @@ re-verified against a real Claude Code/Desktop process since** — see
 exactly what has and hasn't been exercised live.
 
 See [`packages/mcp-server/README.md`](packages/mcp-server/README.md) for
-the full 20-tool list and setup steps (Claude Code **and** Claude
+the full 22-tool list and setup steps (Claude Code **and** Claude
 Desktop). In short:
 
 ```bash
@@ -231,6 +231,22 @@ claude mcp add trace \
 Run `claude mcp list` (not `get` — see "Known limitations," `get` prints
 the token in plain text) to confirm `trace` shows **✔ Connected**, then
 ask Claude to call `trace_list_environments` as a harmless first test.
+
+**Temporary credential enrollment (v0.5, disabled by default)**: Claude
+can ask to enroll a credential (`trace_request_credential_enrollment`),
+but it never receives, sends, or stores the secret itself — the tool
+only requests a 5-minute window; a human approves it from TRACE's
+dashboard (Settings → Pending approvals), and only then can they type
+the credential straight into the device's own panel. This capability
+is off until you explicitly opt in:
+```
+TRACE_CREDENTIAL_ENROLLMENT_ENABLED=true
+```
+Without it, the proposing call fails immediately with a clear message
+and creates nothing — not even a pending action. See
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)'s "Temporary credential
+enrollment" section for the full flow and why the secret can never
+reach this conversation.
 
 ## Security model
 

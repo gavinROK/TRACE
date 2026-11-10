@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { infraApi, InfraApiError } from "@/lib/infra-api";
-import type { InfraDeviceCategory, InfraDeviceDetail, InfraManagementProtocol } from "@/lib/infra-types";
+import type { CredentialEnrollmentSessionSummary, InfraDeviceCategory, InfraDeviceDetail, InfraManagementProtocol } from "@/lib/infra-types";
 
 const CATEGORIES: InfraDeviceCategory[] = [
   "PHYSICAL_SERVER", "VIRTUAL_MACHINE", "CONTAINER", "ROUTER", "FIREWALL",
@@ -26,6 +26,7 @@ export function DeviceRightPanel({ environmentId, deviceId, onClose, onOpenConso
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  const [enrollmentSession, setEnrollmentSession] = useState<CredentialEnrollmentSessionSummary | null>(null);
 
   const load = useCallback(() => {
     return infraApi
@@ -34,9 +35,25 @@ export function DeviceRightPanel({ environmentId, deviceId, onClose, onOpenConso
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load device"));
   }, [environmentId, deviceId]);
 
+  const loadEnrollmentSession = useCallback(() => {
+    return infraApi.getActiveCredentialEnrollmentSession(environmentId, deviceId).then(setEnrollmentSession);
+  }, [environmentId, deviceId]);
+
   useEffect(() => {
     load();
-  }, [load]);
+    loadEnrollmentSession();
+  }, [load, loadEnrollmentSession]);
+
+  // While a window is open (AUTHORIZED), poll so the countdown and
+  // "has the human finished yet" status stay live without a manual
+  // refresh — this is also how an operator notices the window expired
+  // out from under them. Stops polling once the session leaves
+  // AUTHORIZED (completed/expired/revoked), so this never runs forever.
+  useEffect(() => {
+    if (enrollmentSession?.status !== "AUTHORIZED") return;
+    const interval = setInterval(loadEnrollmentSession, 5_000);
+    return () => clearInterval(interval);
+  }, [enrollmentSession?.status, loadEnrollmentSession]);
 
   async function handleTestConnection() {
     setTesting(true);
@@ -115,7 +132,16 @@ export function DeviceRightPanel({ environmentId, deviceId, onClose, onOpenConso
         <DeviceReadOnlyView device={device} />
       )}
 
-      <CredentialsSection environmentId={environmentId} deviceId={deviceId} credentials={device.credentials} onChanged={load} />
+      <CredentialsSection
+        environmentId={environmentId}
+        deviceId={deviceId}
+        credentials={device.credentials}
+        enrollmentSession={enrollmentSession}
+        onChanged={() => {
+          load();
+          loadEnrollmentSession();
+        }}
+      />
 
       <div className="mt-5 border-t border-slate-800 pt-3">
         <button onClick={handleDelete} className="text-xs text-red-400 hover:text-red-300">
@@ -294,11 +320,13 @@ function CredentialsSection({
   environmentId,
   deviceId,
   credentials,
+  enrollmentSession,
   onChanged,
 }: {
   environmentId: string;
   deviceId: string;
   credentials: InfraDeviceDetail["credentials"];
+  enrollmentSession: CredentialEnrollmentSessionSummary | null;
   onChanged: () => void;
 }) {
   const [adding, setAdding] = useState(false);
@@ -307,6 +335,8 @@ function CredentialsSection({
     await infraApi.deleteCredential(environmentId, credentialId);
     onChanged();
   }
+
+  const activeSession = enrollmentSession?.status === "AUTHORIZED" ? enrollmentSession : null;
 
   return (
     <div className="mt-5 border-t border-slate-800 pt-3">
@@ -327,6 +357,16 @@ function CredentialsSection({
           </li>
         ))}
       </ul>
+
+      {activeSession && (
+        <EnrollmentSessionPanel
+          environmentId={environmentId}
+          session={activeSession}
+          onCompleted={onChanged}
+          onCancelled={onChanged}
+        />
+      )}
+
       {adding && (
         <CredentialForm
           environmentId={environmentId}
@@ -341,9 +381,93 @@ function CredentialsSection({
   );
 }
 
-function CredentialForm({ environmentId, deviceId, onSaved }: { environmentId: string; deviceId: string; onSaved: () => void }) {
-  const [label, setLabel] = useState("");
-  const [protocol, setProtocol] = useState<InfraManagementProtocol>("SSH");
+/** TRACE v0.5: shown only while a human-approved, time-boxed enrollment
+ * window is open. The protocol is fixed to whatever the approver
+ * authorized — never re-selectable here — so this form cannot attach
+ * the credential to a protocol nobody approved. Submitting calls
+ * `completeCredentialEnrollmentSession`, the one route that can turn
+ * this window into a real `InfraCredential`; it is also the only place
+ * in this whole flow a secret value exists in the browser's memory at
+ * all, and it goes straight from here to TRACE's own API, never
+ * through Claude or MCP. */
+function EnrollmentSessionPanel({
+  environmentId,
+  session,
+  onCompleted,
+  onCancelled,
+}: {
+  environmentId: string;
+  session: CredentialEnrollmentSessionSummary;
+  onCompleted: () => void;
+  onCancelled: () => void;
+}) {
+  const [cancelling, setCancelling] = useState(false);
+  const minutes = Math.floor(session.secondsRemaining / 60);
+  const seconds = String(session.secondsRemaining % 60).padStart(2, "0");
+
+  async function handleCancel() {
+    setCancelling(true);
+    try {
+      await infraApi.cancelCredentialEnrollmentSession(environmentId, session.id);
+      onCancelled();
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-md border border-amber-700/50 bg-amber-950/30 p-3 text-xs">
+      <div className="flex items-center justify-between">
+        <div className="font-medium text-amber-300">
+          Claude requested a {session.protocol} credential{session.label ? ` ("${session.label}")` : ""}
+        </div>
+        <span className="font-mono text-amber-400">{minutes}:{seconds}</span>
+      </div>
+      <p className="mt-1 text-slate-400">
+        Approved just now — type the value below before this window closes. It is never sent to Claude.
+      </p>
+      <CredentialForm
+        environmentId={environmentId}
+        deviceId={session.deviceId}
+        lockedProtocol={session.protocol}
+        defaultLabel={session.label ?? ""}
+        onSaved={onCompleted}
+        onSubmitCredential={(dto) => infraApi.completeCredentialEnrollmentSession(environmentId, session.id, dto)}
+      />
+      <button
+        onClick={handleCancel}
+        disabled={cancelling}
+        className="mt-2 text-amber-400 hover:text-amber-300 disabled:opacity-50"
+      >
+        {cancelling ? "Cancelling…" : "Cancel this window"}
+      </button>
+    </div>
+  );
+}
+
+function CredentialForm({
+  environmentId,
+  deviceId,
+  lockedProtocol,
+  defaultLabel,
+  onSaved,
+  onSubmitCredential,
+}: {
+  environmentId: string;
+  deviceId: string;
+  /** When set, this form was opened from an authorized enrollment
+   * session — the protocol is fixed to what was approved and cannot
+   * be changed here. */
+  lockedProtocol?: InfraManagementProtocol;
+  defaultLabel?: string;
+  onSaved: () => void;
+  /** Overrides where the credential is actually written — used by
+   * `EnrollmentSessionPanel` to call `completeCredentialEnrollmentSession`
+   * instead of `createCredential`. Defaults to the normal manual-add path. */
+  onSubmitCredential?: (dto: { label: string; payload: Record<string, unknown> }) => Promise<unknown>;
+}) {
+  const [label, setLabel] = useState(defaultLabel ?? "");
+  const [protocol, setProtocol] = useState<InfraManagementProtocol>(lockedProtocol ?? "SSH");
   const [fields, setFields] = useState<Record<string, string>>({});
   const [allowSelfSigned, setAllowSelfSigned] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -360,7 +484,11 @@ function CredentialForm({ environmentId, deviceId, onSaved }: { environmentId: s
     try {
       const payload: Record<string, unknown> = { ...fields };
       if (protocol === "PROXMOX_API") payload.allowSelfSigned = allowSelfSigned;
-      await infraApi.createCredential(environmentId, { label, protocol, deviceId, payload });
+      if (onSubmitCredential) {
+        await onSubmitCredential({ label, payload });
+      } else {
+        await infraApi.createCredential(environmentId, { label, protocol, deviceId, payload });
+      }
       onSaved();
     } catch (err) {
       setError(err instanceof InfraApiError ? err.message : "Failed to save credential");
@@ -374,15 +502,19 @@ function CredentialForm({ environmentId, deviceId, onSaved }: { environmentId: s
       <LabeledInput label="Label" value={label} onChange={setLabel} placeholder="e.g. beelink-ssh" />
       <div>
         <label className="block text-[10px] uppercase tracking-wide text-slate-500">Protocol</label>
-        <select
-          value={protocol}
-          onChange={(e) => { setProtocol(e.target.value as InfraManagementProtocol); setFields({}); }}
-          className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-100"
-        >
-          <option value="SSH">SSH</option>
-          <option value="PROXMOX_API">Proxmox API</option>
-          <option value="SNMP_V3">SNMPv3</option>
-        </select>
+        {lockedProtocol ? (
+          <p className="mt-1 text-slate-300">{lockedProtocol} <span className="text-slate-500">(set by the approved request — fixed)</span></p>
+        ) : (
+          <select
+            value={protocol}
+            onChange={(e) => { setProtocol(e.target.value as InfraManagementProtocol); setFields({}); }}
+            className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 px-2 py-1.5 text-slate-100"
+          >
+            <option value="SSH">SSH</option>
+            <option value="PROXMOX_API">Proxmox API</option>
+            <option value="SNMP_V3">SNMPv3</option>
+          </select>
+        )}
       </div>
 
       {protocol === "SSH" && (
