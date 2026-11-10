@@ -83,7 +83,12 @@ single enforcement point for "don't show a control that isn't real."
   developer-intelligence module's `ApiKey.hashedKey`). `TraceAccessGuard`
   accepts either a valid session cookie (the browser) or a fixed
   `TRACE_MCP_SERVICE_TOKEN` bearer token (the MCP server only) — there is
-  no third "trust the caller" path.
+  no third "trust the caller" path. Setting `TRACE_MCP_READ_ONLY=true`
+  additionally restricts *only* the service token (never a browser
+  session) to GET/HEAD/OPTIONS — meant for verifying a new MCP
+  registration before trusting it with write access; live-verified end
+  to end (`trace_execute_command` correctly 403s under this flag, both
+  over raw HTTP and through a real MCP client call).
 - **Policy**: read-only operations (health checks, listing, metrics) run
   without extra gating. Destructive actions (`stop`/`shutdown`/`reboot`
   on a VM, running a command against more than one device at once)
@@ -194,6 +199,22 @@ single enforcement point for "don't show a control that isn't real."
   type-inference loop.** `packages/mcp-server/src/server.ts` works around
   this with one type assertion narrowing the call shape — see that file's
   top comment. Runtime behavior (including zod validation) is unaffected.
+- **`claude mcp get <name>` prints a registered server's env vars —
+  including any secret token passed via `-e` — in plain text to the
+  terminal.** This is the Claude Code CLI's own documented behavior
+  (it's showing *you* your own config), not a TRACE bug, but it means
+  running `get` anywhere the output might be logged, screen-shared, or
+  pasted is a real exposure path. `claude mcp list` shows connection
+  status without this risk — prefer it for routine checks; rotate the
+  token (regenerate, update `apps/api/.env`, `claude mcp remove` +
+  `add` again) if `get`'s output is ever shared.
+- **`packages/mcp-server`'s `tsconfig.json` originally had `rootDir:
+  "."` while its sources live under `src/`, so `tsc` emitted to
+  `dist/src/index.js` instead of the `dist/index.js` that
+  `package.json`'s `main`/`bin` fields and this README's own
+  `claude mcp add` example both assumed.** Found by actually checking
+  the build output before registering it, not by the build "succeeding"
+  — `tsc` gave no error either way. Fixed by setting `rootDir: "./src"`.
 - **No `trace_get_services` MCP tool / service-level inspection.** Nothing
   in the backend inspects what services run on a device (beyond SSH
   command output) — this is listed in the product spec as a tool name but

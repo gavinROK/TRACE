@@ -377,6 +377,62 @@ server`/`packages/telemetry-sdk`, `apps/web`'s webpack build succeeds
 against real hardware, WebAuthn against a real key, and the MCP server
 registered with a live Claude Code CLI session.
 
+## Phase 4 follow-up — MCP server registered and live-verified with Claude Code
+
+The one item Phase 4 left unverified. Found and fixed a real build bug
+before it could bite: `packages/mcp-server/tsconfig.json` had `rootDir:
+"."` while sources live under `src/`, so `tsc` emitted to
+`dist/src/index.js`, not the `dist/index.js` the README's own `claude
+mcp add` example and `package.json`'s `main`/`bin` both assumed — `tsc`
+gave no error either way, so this only surfaces by actually checking the
+build output. Fixed by setting `rootDir: "./src"`.
+
+**Added real read-only enforcement for the service token** —
+`TRACE_MCP_READ_ONLY=true` in `TraceAccessGuard` restricts *only* the
+MCP bearer token (never a browser session) to GET/HEAD/OPTIONS,
+requested explicitly ("only the permissions required for initial
+read-only testing") and not previously implemented — the service token
+was all-or-nothing before this.
+
+**A real credential-exposure lesson, not a code bug**: `claude mcp get
+trace` prints a registered server's env vars — including the service
+token — in plain text to the terminal, by design (it's showing you your
+own config). `claude mcp list` shows connection status without this
+risk. The token used in this session was rotated (regenerated,
+`apps/api/.env` updated, re-registered) specifically because `get` was
+run once to confirm the config; `list` was used for every check after
+that. Documented in both the root README and `packages/mcp-server/README.md`.
+
+**Live-verified, registered with the actual Claude Code CLI**
+(`claude mcp add trace -e TRACE_MCP_SERVICE_TOKEN=... -e
+TRACE_API_BASE_URL=... -- node .../dist/index.js`), confirmed **✔
+Connected** via `claude mcp list`. A scripted real
+`@modelcontextprotocol/sdk` `Client` then connected over real stdio to
+the real `dist/index.js` process and, against the real running backend:
+- Listed all 16 tools.
+- `trace_list_environments` → the real two environments.
+- `trace_list_devices` / `trace_get_device` (Beelink) → real `ONLINE`
+  status, real metrics, and the 4 real Proxmox guests discovered in the
+  prior session.
+- `trace_get_topology` → correct `HOSTS` edges from the Beelink to its
+  4 guests.
+- `trace_execute_command` → correctly blocked with a 403 surfaced as a
+  clean tool error (not a crash), confirming `TRACE_MCP_READ_ONLY`
+  enforcement works through the full MCP protocol stack, not just raw
+  HTTP.
+
+No real infrastructure was touched (every call made was read-only; the
+one write attempt was the blocked `trace_execute_command` call used to
+prove the restriction works). The scripted test client and its scratch
+file were deleted after the run, not committed.
+
+**Verified:** 231 backend Jest tests (up from 227, +4 for the read-only
+guard), 8 MCP tests (unchanged — the guard change is backend-side and
+covered there), `tsc --noEmit`/ESLint clean across every workspace. No
+credential appeared in any git-tracked file, build log, or committed
+test fixture — confirmed by grepping every changed file for the actual
+token values before committing.
+
 ### Product evaluation: realistic 50-person org, bug fixes, security review
 
 A comprehensive evaluation of TRACE as it stood after the infrastructure/

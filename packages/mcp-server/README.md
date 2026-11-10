@@ -34,29 +34,41 @@ Not implemented (see the root README's "Current limitations"):
 ## Setup
 
 1. Start the TRACE API (`apps/api`) — see the root README's Quick start.
-2. Generate a service token and put it in **both** places below:
+2. Generate a service token:
    ```bash
    openssl rand -base64 32
    ```
 3. Add to `apps/api/.env`:
    ```
-   TRACE_MCP_SERVICE_TOKEN=<the token>
+   TRACE_MCP_SERVICE_TOKEN="<the token>"
+   TRACE_MCP_READ_ONLY=true
    ```
-4. Build this package:
+   **`TRACE_MCP_READ_ONLY=true` is strongly recommended for initial
+   setup** — it restricts the service token to GET/HEAD/OPTIONS only, so
+   the very first time this is wired up, Claude genuinely cannot run a
+   command or change anything through it, only read. A browser session
+   is never affected by this flag. Unset it once you've verified the
+   connection and are ready to let Claude execute commands/actions.
+4. Build this package (this also regenerates the Prisma-adjacent `dist/`
+   layout flat at `dist/index.js`, matching `package.json`'s `main`):
    ```bash
    npm run build --workspace packages/mcp-server
    ```
-5. Register it with Claude Code:
+5. Register it with Claude Code, passing the token as an environment
+   variable for the MCP server process directly — `-e` values are stored
+   in Claude Code's own project config (`~/.claude.json`, `0600`
+   permissions), not in this repo:
    ```bash
-   claude mcp add trace -- node /absolute/path/to/TRACE/packages/mcp-server/dist/index.js
+   claude mcp add trace \
+     -e TRACE_MCP_SERVICE_TOKEN=<the token> \
+     -e TRACE_API_BASE_URL=http://localhost:4000 \
+     -- node /absolute/path/to/TRACE/packages/mcp-server/dist/index.js
    ```
-   Then set the same token as an environment variable for the MCP server
-   process — either export it in your shell profile before launching
-   Claude Code, or add an `env` block for `trace` in your Claude Code MCP
-   config pointing at `TRACE_MCP_SERVICE_TOKEN` and `TRACE_API_BASE_URL`
-   (defaults to `http://localhost:4000`).
-6. In Claude Code, run `/mcp` to confirm `trace` is connected and its
-   tools are listed.
+6. Run `claude mcp list` to confirm `trace` shows **✔ Connected** — note
+   that `claude mcp get trace` (unlike `list`) prints the configured
+   token in plain text to your terminal, by design (it's showing you
+   your own config); avoid running `get` where the output might be
+   logged or shared, and rotate the token if it ever is.
 7. Try a harmless read-only call: ask Claude to run `trace_list_environments`.
 
 ## What's verified vs. what isn't
@@ -67,10 +79,18 @@ Not implemented (see the root README's "Current limitations"):
   protocol layer Claude Code's MCP integration uses), lists the tools, and
   calls several of them end to end. Only the HTTP layer underneath
   `TraceClient` is faked there, since there's no live TRACE API in CI.
-- **Not verified here, and worth doing before you rely on it**: actually
-  registering this server with the Claude Code CLI and calling a tool from
-  a live session, against a running TRACE API with a real Postgres
-  database. Step 6-7 above is how to do that.
+- **Verified live, once, against a real `claude mcp add` registration**:
+  a real `@modelcontextprotocol/sdk` `Client` connected over real stdio
+  to the compiled `dist/index.js`, which called a real running TRACE API
+  backed by a real Postgres database. Listed all 16 tools, retrieved
+  real inventory and a real enrolled device's real Proxmox status/
+  metrics/topology, and confirmed `trace_execute_command` is correctly
+  blocked (403, surfaced as a tool error, not a crash) when
+  `TRACE_MCP_READ_ONLY=true`. `claude mcp list` reported **✔ Connected**.
+- **Not verified**: a live session where Claude itself (not a scripted
+  test client) calls a tool through a running Claude Code conversation —
+  functionally identical to the above, just not literally exercised that
+  way yet.
 
 ## Known limitation
 

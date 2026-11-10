@@ -173,26 +173,38 @@ see `docs/ARCHITECTURE.md` "Known limitations"). Pin a fingerprint
 explicitly via `hostKeyFingerprint` in the payload if you want that
 checked from the very first connection instead.
 
-## MCP configuration
+## MCP configuration — **live-verified**: registered with a real Claude Code CLI, a real client called 4 tools against the real backend and real Beelink
 
 See [`packages/mcp-server/README.md`](packages/mcp-server/README.md) for
-the full tool list and setup steps. In short:
+the full 16-tool list and setup steps. In short:
 
 ```bash
-openssl rand -base64 32   # put this in both places below
+openssl rand -base64 32
 ```
 
-Add to `apps/api/.env`: `TRACE_MCP_SERVICE_TOKEN=<token>`. Build the
-server (`npm run build --workspace packages/mcp-server`), then register
-it with Claude Code:
+Add to `apps/api/.env`:
+```
+TRACE_MCP_SERVICE_TOKEN="<token>"
+TRACE_MCP_READ_ONLY=true
+```
+`TRACE_MCP_READ_ONLY=true` is strongly recommended to start — it
+restricts *only* the service token to GET/HEAD/OPTIONS, so a brand-new
+registration genuinely can't run a command or change anything until you
+unset it. Build the server (`npm run build --workspace packages/mcp-server`),
+then register it, passing the token directly as an env var for the MCP
+process (stored in Claude Code's own `~/.claude.json`, mode `0600` — not
+in this repo):
 
 ```bash
-claude mcp add trace -- node /absolute/path/to/TRACE/packages/mcp-server/dist/index.js
+claude mcp add trace \
+  -e TRACE_MCP_SERVICE_TOKEN=<token> \
+  -e TRACE_API_BASE_URL=http://localhost:4000 \
+  -- node /absolute/path/to/TRACE/packages/mcp-server/dist/index.js
 ```
 
-with `TRACE_MCP_SERVICE_TOKEN` and `TRACE_API_BASE_URL` set in its
-environment. Run `/mcp` in Claude Code to confirm it connected, then ask
-Claude to call `trace_list_environments` as a harmless first test.
+Run `claude mcp list` (not `get` — see "Known limitations," `get` prints
+the token in plain text) to confirm `trace` shows **✔ Connected**, then
+ask Claude to call `trace_list_environments` as a harmless first test.
 
 ## Security model
 

@@ -1,9 +1,10 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from "@nestjs/common";
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable, UnauthorizedException } from "@nestjs/common";
 import type { Request } from "express";
 import { parseCookieHeader } from "./cookie.util";
 import { TraceAuthService } from "./trace-auth.service";
 
 export const SESSION_COOKIE_NAME = "trace_session";
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export interface InfraAuthenticatedRequest extends Request {
   /** "user:<TraceUser id>" for a browser session, or "claude-mcp" for
@@ -23,6 +24,13 @@ export interface InfraAuthenticatedRequest extends Request {
  *
  * There is deliberately no third "trust whatever the caller claims"
  * path — an unauthenticated request is always rejected.
+ *
+ * `TRACE_MCP_READ_ONLY=true` additionally restricts the service token
+ * (never a browser session) to safe HTTP methods only — meant for
+ * initial setup/testing, so the first time you wire up the MCP server
+ * it genuinely can't execute a command or change anything, only read.
+ * Unset it (or set it to anything else) once you're ready to let Claude
+ * run commands/actions through TRACE.
  */
 @Injectable()
 export class TraceAccessGuard implements CanActivate {
@@ -34,6 +42,11 @@ export class TraceAccessGuard implements CanActivate {
     const bearer = extractBearerToken(request.headers.authorization);
     const serviceToken = process.env.TRACE_MCP_SERVICE_TOKEN;
     if (bearer && serviceToken && bearer === serviceToken) {
+      if (process.env.TRACE_MCP_READ_ONLY === "true" && !SAFE_METHODS.has(request.method)) {
+        throw new ForbiddenException(
+          `TRACE_MCP_READ_ONLY is enabled — the MCP service token cannot make a ${request.method} request right now. Unset TRACE_MCP_READ_ONLY in apps/api/.env once you want Claude to execute commands/actions through TRACE.`,
+        );
+      }
       request.actor = "claude-mcp";
       return true;
     }
